@@ -1,7 +1,7 @@
 {
   "name": "hexo-pro",
   "version": "1.0.0",
-  "description": "",
+  "description": "hexo pro a backend plugin for hexo",
   "main": "index",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
