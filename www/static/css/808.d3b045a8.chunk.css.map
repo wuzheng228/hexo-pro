@@ -1,0 +1,1 @@
+{"version":3,"file":"static/css/808.d3b045a8.chunk.css","mappings":"AAAA,eACE,cAAe,CACf,eACF,CAHA,mBAKI,gBACJ","sources":["pages/dashboard/workplace/style/popular-contents.module.less"],"sourcesContent":[".symbol {\n  font-size: 10px;\n  margin-left: 4px;\n\n  > svg {\n    vertical-align: 0;\n  }\n}\n"],"names":[],"sourceRoot":""}
