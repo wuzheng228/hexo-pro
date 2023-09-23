@@ -21,6 +21,8 @@ hexo server -d
 open http://localhost:4000/pro/
 ```
 ## 3.配置登陆账户与密码
+需要在hexo的_config.yml中增加以下配置来使用账户密码登陆后台，不配置后台会直接登陆。
+配置后使用jwt来保护后台访问的接口
 ```yml
 hexo_pro:
   username: admim
