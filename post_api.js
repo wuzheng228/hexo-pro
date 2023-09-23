@@ -86,7 +86,7 @@ module.exports = function (app, hexo, use) {
     function remove(id, body, res) {
         var post = hexo.model('Post').get(id)
         if (!post) return res.send(404, "Post not found")
-        var newSource = '_discarded/' + post.source.slice('_drafts'.length)
+        var newSource = path.join('_discarded/', post.source.slice('_drafts'.length))
         update(id, { source: newSource }, function (err, post) {
             if (err) {
                 return res.send(400, err);
@@ -95,16 +95,28 @@ module.exports = function (app, hexo, use) {
         }, hexo)
     }
     use('posts/list', function (req, res) {
+        const parsedUrl = url.parse(req.url, true);
+        const queryParams = parsedUrl.query;
+        const { published } = queryParams
         var post = hexo.model('Post')
         var postList = post.toArray()
         var clonedList = _.cloneDeep(postList);
         clonedList.map(addIsDraft)
-        var sortedList = clonedList.sort(function (a, b) {
+        let finalList = []
+        if (published == 'true') {
+            finalList = clonedList.filter(post => post.isDraft === false && post.isDiscarded === false)
+        } else {
+            finalList = clonedList.filter(post => post.isDraft === true)
+        }
+        var sortedList = finalList.sort(function (a, b) {
             var dateA = new Date(a.date);
             var dateB = new Date(b.date);
             return dateB - dateA; // 比较日期值而不是整个对象
         });
-        res.done(sortedList);
+        res.done(sortedList.map(post => {
+            const { site, raw, content, more, tags, _content, categories, ...rest } = post; // 使用对象解构来排除不需要的属性
+            return rest; // 返回剩余的属性
+        }));
     });
     use('posts/page/list', function (req, res) {
         const parsedUrl = url.parse(req.url, true);
@@ -156,8 +168,8 @@ module.exports = function (app, hexo, use) {
 
         var id = last
         if (last === 'publish') {
-            console.log(parts)
-            console.log(typeof parts[parts.length - 2])
+            // console.log(parts)
+            // console.log(typeof parts[parts.length - 2])
             return publish(parts[parts.length - 2], req.body, res)
         }
         if (last === 'unpublish') {
@@ -167,19 +179,19 @@ module.exports = function (app, hexo, use) {
             return remove(parts[parts.length - 2], req.body, res)
         }
 
-        if (id === 'posts' || !id) return next()
+        if (id === 'posts' || !id) next()
         if (req.method === 'GET') {
             var post = hexo.model('Post').get(id)
-            if (!post) return next()
+            if (!post) next()
             post = _.cloneDeep(post)
-            console.log(Object.keys(post))
-            console.log(post.tags)
-            console.log(post.categories)
-            console.log(post.top_img)
+            // console.log(Object.keys(post))
+            // console.log(post.tags)
+            // console.log(post.categories)
+            // console.log(post.top_img)
             var split = hfm.split(post.raw)
-            console.log('-----> split data', split.data)
+            // console.log('-----> split data', split.data)
             var parsed = hfm.parse([split.data, '---'].join('\n'))
-            console.log('-----> split parsed', parsed)
+            // console.log('-----> split parsed', parsed)
             return res.done(addIsDraft(post))
         }
 
@@ -210,9 +222,9 @@ module.exports = function (app, hexo, use) {
         var id = last
         if (req.method === 'GET') {
             var post = hexo.model('Post').get(id)
-            if (!post) return next()
+            if (!post) next()
             var split = hfm.split(post.raw)
-            console.log('-----> split data', split.data)
+            // console.log('-----> split data', split.data)
             var parsed = hfm.parse([split.data, '---'].join('\n'))
             const { title, author, date, _content, ...rest } = parsed
             if (typeof rest['categories'] === 'string') {
@@ -271,7 +283,7 @@ module.exports = function (app, hexo, use) {
         var buf = new Buffer(dataURI, 'base64')
         hexo.log.d(`saving image to ${outpath}`)
         fs.writeFile(outpath, buf)
-        var imageSrc = path.join((hexo.config.url || hexo.config.root) + filename).replace(/\\/g, '/')
+        var imageSrc = path.join((hexo.config.root) + filename).replace(/\\/g, '/')
         hexo.source.process().then(function () {
             res.done({
                 src: imageSrc,

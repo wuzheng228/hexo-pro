@@ -1,9 +1,11 @@
 
-var post_api = require('./post_api')
+const login_api = require('hexo-pro/login_api');
+const post_api = require('./post_api')
+const page_api = require('./page_api')
 const CircularJSON = require('circular-json');
-module.exports = function (app, hexo) {
+module.exports = function (app, hexo, needLogin) {
     var use = function (path, fn) {
-        app.use(hexo.config.root + 'hexopro/api/' + path, function (req, res) {
+        app.use(hexo.config.root + 'hexopro/api/' + path, function (req, res, next) {
             var done = function (val) {
                 if (!val) {
                     res.statusCode = 204
@@ -17,9 +19,10 @@ module.exports = function (app, hexo) {
                 res.statusCode = num
                 res.end(data)
             }
-            fn(req, res)
+            fn(req, res, next)
         })
     }
-    console.log(hexo)
+    login_api(app, hexo, use, needLogin)
     post_api(app, hexo, use)
+    page_api(app, hexo, use)
 }
