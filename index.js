@@ -13,11 +13,6 @@ if (needLogin) {
         console.error('[Hexo pro]: config admin.password is requred for authentication');
         needLogin = false;
     }
-
-    if (!hexo.config.hexo_pro.secret) {
-        console.error('[Hexo pro]: config admin.secret is requred for authentication');
-        needLogin = false;
-    }
 }
 
 function staticMiddleware(rootDir) {
