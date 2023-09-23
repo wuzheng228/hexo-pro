@@ -1,0 +1,2 @@
+"use strict";(self.webpackChunkarco_design_pro=self.webpackChunkarco_design_pro||[]).push([[361],{31361:function(t,e,c){c.r(e),e.default={shortcuts:"shortcuts--wBTsN",item:"item--C_DwQ",icon:"icon--NdKGr",title:"title--_EGfA",recent:"recent--ZKotA"}}}]);
+//# sourceMappingURL=361.75df9d80.chunk.js.map
