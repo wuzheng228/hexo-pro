@@ -12,7 +12,7 @@ module.exports = function (app, hexo, needLogin) {
                     return res.end('');
                 }
                 res.setHeader('Content-type', 'application/json')
-                res.end(CircularJSON.stringify(val))
+                res.end(JSON.stringify(val))
             }
             res.done = done
             res.send = function (num, data) {
