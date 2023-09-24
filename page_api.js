@@ -31,6 +31,7 @@ module.exports = function (app, hexo, use) {
     }
     function remove(id, body, res) {
         var page = hexo.model('Page').get(id)
+        page = _.cloneDeep(page)
         if (!page) return res.send(404, "Post not found")
         var newSource = path.join('_discarded/', page.source)
         update(id, { source: newSource }, function (err, page) {

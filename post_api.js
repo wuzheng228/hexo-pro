@@ -85,13 +85,14 @@ module.exports = function (app, hexo, use) {
     }
     function remove(id, body, res) {
         var post = hexo.model('Post').get(id)
+        post = _.cloneDeep(post)
         if (!post) return res.send(404, "Post not found")
         var newSource = path.join('_discarded/', post.source.slice('_drafts'.length))
         update(id, { source: newSource }, function (err, post) {
             if (err) {
                 return res.send(400, err);
             }
-            res.done(addIsDraft(post))
+            res.done(post)
         }, hexo)
     }
     use('posts/list', function (req, res) {
