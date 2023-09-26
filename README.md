@@ -46,6 +46,7 @@ hexo_pro:
   username: admim
   password: 123
   avatar: https: image for your own avata
+  secret: xxx // jwt secret key
 ```
 # 贡献
 - 如果你有问题或者相关的建议可以在issues当中向我提出修改意见
