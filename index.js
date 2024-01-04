@@ -100,13 +100,12 @@ hexo.extend.filter.register('server_middleware', function (app) {
             res.setHeader('Content-type', 'application/json')
             res.statusCode = 200
             res.end(JSON.stringify({ code: 401, msg: 'token unauthrized' }))
+        } else {
+            res.setHeader('Content-type', 'application/json')
+            res.statusCode = 500
+            res.end(JSON.stringify({ code: 500, msg: 'unknown err:' + err }))
         }
-        res.setHeader('Content-type', 'application/json')
-        res.statusCode = 500
-        res.end(JSON.stringify({ code: 500, msg: 'unknown err:' + err }))
     })
-
-
 });
 
 
