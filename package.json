@@ -1,6 +1,6 @@
 {
   "name": "hexo-pro",
-  "version": "1.0.11",
+  "version": "1.0.12",
   "description": "hexo pro a backend plugin for hexo",
   "main": "index",
   "scripts": {
