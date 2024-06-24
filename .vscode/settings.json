@@ -1,0 +1,27 @@
+// eslint + format
+{
+    // "eslint.lintTask.options": "-c ./.eslintrc.js --ignore-path ./.eslintignore .",
+    "eslint.options": {
+        "extensions": [
+            ".js",
+            ".jsx",
+            ".ts",
+            ".tsx",
+            ".html",
+            ".vue"
+        ],
+        "overrideConfigFile": "./.eslintrc.js"
+    },
+    "eslint.validate": [
+        "javascript",
+        "javascriptreact",
+        "html",
+        "typescriptreact"
+    ],
+    "editor.codeActionsOnSave": {
+        "source.fixAll.eslint": "explicit"
+    },
+    "eslint.workingDirectories": [
+        "./client/src",
+    ],
+}

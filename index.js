@@ -2,7 +2,7 @@
 var serveStatic = require('serve-static');
 var bodyParser = require('body-parser');
 var path = require('path');
-var api = require('./api');
+var api = require('./backend/api');
 const { expressjwt: jwt } = require('express-jwt')
 const fs = require('fs');
 const mime = require('mime')
