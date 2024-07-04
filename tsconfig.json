@@ -21,6 +21,7 @@
         "jsx": "react-jsx"
     },
     "include": [
-        "./client/src"
+        "./client/src",
+        "./client/src/declaration.d.ts"
     ]
 }
