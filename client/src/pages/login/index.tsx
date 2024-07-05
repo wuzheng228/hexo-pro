@@ -1,13 +1,11 @@
 import React from 'react'
 import './style/index.css'
-import Logo from '../../assets/logo'
-type person = {
-    name: string
-}
+import Logo from '../../assets/logo.svg'
+
 function Login() {
     return (
         <div className='container'>
-            {/* Logo */}
+
             <div className='logo'>
                 <Logo />
             </div>

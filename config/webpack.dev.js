@@ -58,13 +58,17 @@ module.exports = {
                         use: getStyleLoaders("stylus-loader"),
                     },
                     {
-                        test: /\.(png|jpe?g|gif|svg)$/,
+                        test: /\.(png|jpe?g|gif)$/,
                         type: "asset",
                         parser: {
                             dataUrlCondition: {
                                 maxSize: 10 * 1024, // 小于10kb的图片会被base64处理
                             },
                         },
+                    },
+                    {
+                        test: /\.svg$/,
+                        use: ['@svgr/webpack'],
                     },
                     {
                         test: /\.(ttf|woff2?)$/,
@@ -77,7 +81,7 @@ module.exports = {
                     //     use: 'eslint-loader',
                     // },
                     {
-                        test: /\.(tsx|js)$/,
+                        test: /\.(tsx|js|ts)$/,
                         include: path.resolve(__dirname, "../client/src"),
                         loader: "babel-loader",
                         options: {
@@ -90,13 +94,13 @@ module.exports = {
                         },
                     },
                     {
-                        test: /\.(tsx)$/,
+                        test: /\.(tsx|ts)$/,
                         include: path.resolve(__dirname, "../client/src"),
                         use: ["ts-loader"],
                         exclude: /node_modules/,
                     },
                 ],
-            },
+            }
         ],
     },
     // 插件
