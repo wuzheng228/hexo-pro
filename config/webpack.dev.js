@@ -9,7 +9,12 @@ const getStyleLoaders = (preProcessor) => {
     console.log(path.resolve(__dirname, "../client/src"))
     return [
         "style-loader",
-        "css-loader",
+        {
+            loader: "css-loader",
+            options: {
+                modules: true,
+            },
+        },
         {
             loader: "postcss-loader",
             options: {
@@ -44,10 +49,27 @@ module.exports = {
                         test: /\.css$/,
                         // use 数组里面 Loader 执行顺序是从右到左
                         use: getStyleLoaders(),
+                        include: /\.module\.css$/
+                    },
+                    {
+                        // 用来匹配 .css 结尾的文件
+                        test: /\.css$/,
+                        // use 数组里面 Loader 执行顺序是从右到左
+                        use: [
+                            'style-loader',
+                            'css-loader'
+                        ],
+                        exclude: /\.module\.css$/
                     },
                     {
                         test: /\.less$/,
                         use: getStyleLoaders("less-loader"),
+                        include: /\.module\.less$/
+                    },
+                    {
+                        test: /\.less$/,
+                        use: getStyleLoaders("less-loader"),
+                        exclude: /\.module\.less$/
                     },
                     {
                         test: /\.s[ac]ss$/,
@@ -97,10 +119,11 @@ module.exports = {
                         test: /\.(tsx|ts)$/,
                         include: path.resolve(__dirname, "../client/src"),
                         use: ["ts-loader"],
-                        exclude: /node_modules/,
+                        exclude: path.resolve(__dirname, "../node_modules"),
                     },
                 ],
-            }
+            },
+
         ],
     },
     // 插件
@@ -130,7 +153,7 @@ module.exports = {
         }),
         new ESLintWebpackPlugin({
             context: path.resolve(__dirname, "../client/src"),
-            exclude: "node_modules",
+            exclude: path.resolve(__dirname, "../node_modules"),
             cache: true,
             cacheLocation: path.resolve(
                 __dirname,

@@ -1,0 +1,89 @@
+.container {
+    display: flex;
+    height: 100vh;
+}
+
+.container .banner {
+    width: 550px;
+    background: linear-gradient(163.85deg, #1d2129 0%, #00308f 100%);
+}
+
+.container .content {
+    display: flex;
+    flex: 1;
+    padding-bottom: 40px;
+}
+
+.logo {
+    position: fixed;
+    top: 24px;
+    left: 22px;
+    display: inline-flex;
+    align-items: center;
+    z-index: 1;
+}
+
+.banner {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+.banner-inner {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100%;
+}
+
+.carousel-item {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    height: 100%;
+}
+
+.carousel-item .carousel-title {
+    font-weight: 500;
+    font-size: 20px;
+    line-height: 28px;
+    color: white;
+}
+
+.carousel-item .carousel-sub-title {
+    margin-top: 8px;
+    font-size: 14px;
+    line-height: 22px;
+    color: gray;
+}
+
+
+.carousel-image {
+    margin-top: 30px;
+    margin-bottom: 60px;
+    width: 320px;
+}
+
+
+.content {
+    align-items: center;
+    justify-content: center;
+}
+
+.login-form-wrapper {
+    width: 320px;
+}
+
+.login-form-title {
+    font-size: 24px;
+    font-weight: 500;
+    color: black;
+    line-height: 32px;
+}
+
+.login-form-sub-title {
+    font-size: 16px;
+    line-height: 24px;
+    color: gray;
+}
