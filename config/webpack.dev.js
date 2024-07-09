@@ -12,7 +12,7 @@ const getStyleLoaders = (preProcessor) => {
         {
             loader: "css-loader",
             options: {
-                modules: true,
+                modules: false,
             },
         },
         {
@@ -44,13 +44,12 @@ module.exports = {
         rules: [
             {
                 oneOf: [
-                    {
-                        // 用来匹配 .css 结尾的文件
-                        test: /\.css$/,
-                        // use 数组里面 Loader 执行顺序是从右到左
-                        use: getStyleLoaders(),
-                        include: /\.module\.css$/
-                    },
+                    // {
+                    //     // 用来匹配 .css 结尾的文件
+                    //     test: /\.css$/,
+                    //     // use 数组里面 Loader 执行顺序是从右到左
+                    //     use: getStyleLoaders(),
+                    // },
                     {
                         // 用来匹配 .css 结尾的文件
                         test: /\.css$/,
@@ -59,26 +58,28 @@ module.exports = {
                             'style-loader',
                             'css-loader'
                         ],
-                        exclude: /\.module\.css$/
+                        // exclude: /(node_modules|\.module\.css$)/
                     },
                     {
                         test: /\.less$/,
                         use: getStyleLoaders("less-loader"),
-                        include: /\.module\.less$/
+                        include: /\.module\.less$/,
+                        exclude: [/node_modules/]
                     },
                     {
                         test: /\.less$/,
                         use: getStyleLoaders("less-loader"),
-                        exclude: /\.module\.less$/
+                        exclude: [/node_modules/]
+
                     },
-                    {
-                        test: /\.s[ac]ss$/,
-                        use: getStyleLoaders("sass-loader"),
-                    },
-                    {
-                        test: /\.styl$/,
-                        use: getStyleLoaders("stylus-loader"),
-                    },
+                    // {
+                    //     test: /\.s[ac]ss$/,
+                    //     use: getStyleLoaders("sass-loader"),
+                    // },
+                    // {
+                    //     test: /\.styl$/,
+                    //     use: getStyleLoaders("stylus-loader"),
+                    // },
                     {
                         test: /\.(png|jpe?g|gif)$/,
                         type: "asset",

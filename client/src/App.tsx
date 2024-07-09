@@ -5,6 +5,7 @@ import { BrowserRouter, Route, Routes } from 'react-router-dom'
 
 import rootReducer from './store'
 import Login from "./pages/login"
+import PageLayout from "./layout"
 
 const store = createStore(rootReducer)
 
@@ -14,7 +15,7 @@ function App() {
             <Provider store={store}>
                 <Routes>
                     <Route path="/login" element={<Login />} />
-                    <Route path="/" element={<Login />} />
+                    <Route path="/" element={<PageLayout />} />
                 </Routes>
             </Provider>
         </BrowserRouter>

@@ -1,6 +1,6 @@
 import React from "react"
 import { Carousel } from "antd"
-import styles from './style/index.module.css'
+import styles from './style/index.module.less'
 
 export default function LoginBanner() {
     const data = [
