@@ -1,6 +1,6 @@
-import { LockOutlined, UserOutlined } from "@ant-design/icons";
-import { Form, Input } from "antd";
-import React, { useState } from "react";
+import { LockOutlined, UserOutlined } from "@ant-design/icons"
+import { Form, Input } from "antd"
+import React, { useState } from "react"
 import styles from './style/index.module.less'
 
 export default function LoginForm() {

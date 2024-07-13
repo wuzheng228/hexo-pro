@@ -6,13 +6,15 @@
   "scripts": {
     "start": "npm run dev",
     "dev": "yarn cross-env NODE_ENV=development webpack serve --config ./config/webpack.dev.js",
-    "build": "yarn run lint && cross-env NODE_ENV=production webpack --config ./config/webpack.prod.js",
+    "build": "cross-env NODE_ENV=production webpack --config ./config/webpack.prod.js",
     "lint": "eslint ./client/src/*",
     "eslint": "eslint ./client/src/ --ext .ts,.tsx,.js,.jsx --fix --cache"
   },
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@ant-design/icons": "^5.3.7",
+    "@loadable/component": "^5.16.4",
     "antd": "^5.18.3",
     "bcrypt-nodejs": "^0.0.3",
     "body-parser": "^1.20.2",
@@ -29,6 +31,7 @@
     "jsonwebtoken": "^9.0.2",
     "lodash": "^4.17.21",
     "mime": "^3.0.0",
+    "query-string": "^9.0.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-redux": "^9.1.2",

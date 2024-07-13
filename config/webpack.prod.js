@@ -32,6 +32,7 @@ module.exports = {
     entry: "./client/src/index.tsx",
     // 输出
     output: {
+        publicPath: '/pro/',
         path: path.resolve(__dirname, '../www'),
         filename: 'static/js/[name][contenthash:10].js',
         chunkFilename: 'static/js/[name][contenthash:10].chunk.js',
@@ -48,19 +49,37 @@ module.exports = {
                         test: /\.css$/,
                         // use 数组里面 Loader 执行顺序是从右到左
                         use: getStyleLoaders(),
+                        include: /\.module\.css$/,
+                    },
+                    {
+                        // 用来匹配 .css 结尾的文件
+                        test: /\.css$/,
+                        // use 数组里面 Loader 执行顺序是从右到左
+                        use: [
+                            'style-loader',
+                            'css-loader'
+                        ],
+                        exclude: /(\.module\.css$)/
                     },
                     {
                         test: /\.less$/,
                         use: getStyleLoaders("less-loader"),
+                        include: /\.module\.less$/,
+                        exclude: [/node_modules/]
                     },
                     {
-                        test: /\.s[ac]ss$/,
-                        use: getStyleLoaders("sass-loader"),
+                        test: /\.less$/,
+                        use: getStyleLoaders("less-loader"),
+                        exclude: /\.module\.less$/
                     },
-                    {
-                        test: /\.styl$/,
-                        use: getStyleLoaders("stylus-loader"),
-                    },
+                    // {
+                    //     test: /\.s[ac]ss$/,
+                    //     use: getStyleLoaders("sass-loader"),
+                    // },
+                    // {
+                    //     test: /\.styl$/,
+                    //     use: getStyleLoaders("stylus-loader"),
+                    // },
                     {
                         test: /\.(png|jpe?g|gif)$/,
                         type: "assets",
@@ -157,7 +176,10 @@ module.exports = {
         minimizer: [new CssMinimizerPlugin(), new TerserWebpackPlugin()]
     },
     resolve: {
-        extensions: [".jsx", ".tsx", ".js", ".json"], // 自动补全文件扩展名，让jsx可以使用
+        alias: {
+            '@': path.resolve(__dirname, '../client/src'),
+        },
+        extensions: [".jsx", ".tsx", ".ts", ".js", ".json"],  // 自动补全文件扩展名，让jsx可以使用
     },
     // 模式
     mode: "production",

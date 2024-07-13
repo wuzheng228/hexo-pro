@@ -1,0 +1,1 @@
+{"version":3,"file":"static/js/942b43c4c956c.chunk.js","mappings":"+IAEe,SAASA,IACpB,OACIC,EAAAA,cAAA,UAAI,OAEZ,C","sources":["webpack://hexo-pro/./client/src/pages/content/posts/blogs/index.tsx"],"sourcesContent":["import React from \"react\"\r\n\r\nexport default function Blog() {\r\n    return (\r\n        <h1>blog</h1>\r\n    )\r\n}"],"names":["Blog","React"],"sourceRoot":""}

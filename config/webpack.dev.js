@@ -9,12 +9,7 @@ const getStyleLoaders = (preProcessor) => {
     console.log(path.resolve(__dirname, "../client/src"))
     return [
         "style-loader",
-        {
-            loader: "css-loader",
-            options: {
-                modules: false,
-            },
-        },
+        "css-loader",
         {
             loader: "postcss-loader",
             options: {
@@ -35,6 +30,7 @@ module.exports = {
     // 输出
     output: {
         path: undefined,
+        publicPath: '/pro',
         filename: 'static/js/[name].js',
         chunkFilename: 'static/js/[name].chunk.js',
         assetModuleFilename: 'static/media/[hash:10][ext][query]',
@@ -44,12 +40,13 @@ module.exports = {
         rules: [
             {
                 oneOf: [
-                    // {
-                    //     // 用来匹配 .css 结尾的文件
-                    //     test: /\.css$/,
-                    //     // use 数组里面 Loader 执行顺序是从右到左
-                    //     use: getStyleLoaders(),
-                    // },
+                    {
+                        // 用来匹配 .css 结尾的文件
+                        test: /\.css$/,
+                        // use 数组里面 Loader 执行顺序是从右到左
+                        use: getStyleLoaders(),
+                        include: /\.module\.css$/,
+                    },
                     {
                         // 用来匹配 .css 结尾的文件
                         test: /\.css$/,
@@ -58,7 +55,7 @@ module.exports = {
                             'style-loader',
                             'css-loader'
                         ],
-                        // exclude: /(node_modules|\.module\.css$)/
+                        exclude: /(\.module\.css$)/
                     },
                     {
                         test: /\.less$/,
@@ -69,8 +66,7 @@ module.exports = {
                     {
                         test: /\.less$/,
                         use: getStyleLoaders("less-loader"),
-                        exclude: [/node_modules/]
-
+                        exclude: /\.module\.less$/
                     },
                     // {
                     //     test: /\.s[ac]ss$/,
@@ -138,7 +134,7 @@ module.exports = {
             patterns: [
                 {
                     from: path.resolve(__dirname, "../client/public"),
-                    to: path.resolve(__dirname, "../dist"),
+                    to: path.resolve(__dirname, "../www"),
                     toType: "dir",
                     noErrorOnMissing: true, // 不生成错误
                     globOptions: {
@@ -171,7 +167,10 @@ module.exports = {
         },
     },
     resolve: {
-        extensions: [".jsx", ".tsx", ".js", ".json"], // 自动补全文件扩展名，让jsx可以使用
+        alias: {
+            '@': path.resolve(__dirname, '../client/src'),
+        },
+        extensions: [".jsx", ".tsx", ".ts", ".js", ".json"], // 自动补全文件扩展名，让jsx可以使用
     },
     devServer: {
         open: true,
@@ -179,7 +178,11 @@ module.exports = {
         port: 3000,
         hot: true,
         compress: true,
-        historyApiFallback: true, // 解决react-router刷新404问题
+        historyApiFallback: {
+            rewrites: [
+                { from: /\.*/, to: '/pro/index.html' },
+            ]
+        }
     },
     // 模式
     mode: "development",

@@ -1,0 +1,2 @@
+"use strict";(self.webpackChunkhexo_pro=self.webpackChunkhexo_pro||[]).push([[942],{2942:(e,r,u)=>{u.r(r),u.d(r,{default:()=>n});var l=u(6540);function n(){return l.createElement("h1",null,"blog")}}}]);
+//# sourceMappingURL=942b43c4c956c.chunk.js.map

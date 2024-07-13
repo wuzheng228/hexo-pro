@@ -1,0 +1,2 @@
+"use strict";(self.webpackChunkhexo_pro=self.webpackChunkhexo_pro||[]).push([[513],{3513:(e,r,u)=>{u.r(r),u.d(r,{default:()=>t});var n=u(6540);function t(){return n.createElement("h1",null,"Page")}}}]);
+//# sourceMappingURL=513865cd8299e.chunk.js.map

@@ -1,0 +1,1 @@
+{"version":3,"file":"static/js/513865cd8299e.chunk.js","mappings":"+IAEe,SAASA,IACpB,OACIC,EAAAA,cAAA,UAAI,OAEZ,C","sources":["webpack://hexo-pro/./client/src/pages/content/pages/index.tsx"],"sourcesContent":["import React from \"react\"\r\n\r\nexport default function Page() {\r\n    return (\r\n        <h1>Page</h1>\r\n    )\r\n}"],"names":["Page","React"],"sourceRoot":""}
