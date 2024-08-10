@@ -13,3 +13,25 @@
     width: 100%;
     min-height: calc(100vh - @nav-size-height);
 }
+
+.layout-sider {
+    position: fixed; // 固定定位 位置是相对于 视口 进行定位的
+    height: 100vh;
+    top: 0;
+    left: 0;
+    z-index: 99;
+    box-sizing: border-box;
+
+}
+
+.layout-content {
+    position: relative;
+    min-width: @layout-max-width;
+    min-height: 100vh;
+    transition: padding-left 0.2s;
+    box-sizing: border-box;
+}
+
+.layout-content-wrapper {
+    padding: 16px 20px 0px 20px;
+}

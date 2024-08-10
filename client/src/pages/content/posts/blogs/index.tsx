@@ -1,7 +1,8 @@
 import React from "react"
+import ArticleList from "../../components/ArticleList"
 
 export default function Blog() {
     return (
-        <h1>blog</h1>
+        <ArticleList published={true} />
     )
 }

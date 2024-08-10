@@ -1,0 +1,247 @@
+#postroot {
+    height: 100vh;
+    overflow: hidden;
+}
+
+.editorWrapper {
+    height: 100%;
+    display: flex;
+}
+
+.markdown {
+    height: 100%;
+    flex: 0 0 50%;
+    padding: 0 12px 0 0;
+    overflow-y: auto;
+
+    &::-webkit-scrollbar {
+        width: 10px;
+    }
+
+    &::-webkit-scrollbar-thumb {
+        background-color: #999;
+        border-radius: 10px;
+    }
+
+    &::-webkit-scrollbar-track {
+        background-color: #f0f0f0;
+    }
+
+    &::-webkit-scrollbar-thumb:hover {
+        background-color: #777;
+    }
+}
+
+.preview {
+    font-size: 14px;
+    height: 100%;
+    flex: 0 0 50%;
+    padding: 0 0 0 12px;
+    border-left: solid 1px #ddd;
+    overflow-x: hidden;
+    overflow-y: auto;
+
+    * {
+        overflow-x: auto;
+    }
+
+    &::before {
+        content: "";
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        z-index: -1;
+        background: linear-gradient(transparent, transparent);
+    }
+
+    &::-webkit-scrollbar {
+        width: 0;
+    }
+
+    &::-webkit-scrollbar-track {
+        background: transparent;
+    }
+
+    &::-webkit-scrollbar-thumb {
+        background: transparent;
+    }
+
+    h1 {
+        font-size: 2.5em;
+        border-bottom: 2px solid #ddd;
+        margin-top: 0;
+        padding-bottom: 8px;
+        font-weight: 600;
+        color: #333;
+    }
+
+    h2 {
+        font-size: 2em;
+        border-bottom: 1px solid #ddd;
+        margin-top: 24px;
+        padding-bottom: 4px;
+        font-weight: 500;
+        color: #444;
+    }
+
+    h3 {
+        font-size: 1.8em;
+        margin-top: 20px;
+        font-weight: 500;
+        color: #555;
+    }
+
+    h4 {
+        font-size: 1.6em;
+        margin-top: 18px;
+        font-weight: 500;
+        color: #666;
+    }
+
+    h5 {
+        font-size: 1.4em;
+        margin-top: 16px;
+        font-weight: 500;
+        color: #777;
+    }
+
+    h6 {
+        font-size: 1.2em;
+        margin-top: 14px;
+        font-weight: 500;
+        color: #888;
+    }
+
+    p {
+        margin: 14px 0;
+        color: #333;
+    }
+
+    blockquote {
+        border-left: 4px solid #ccc;
+        margin: 16px 0;
+        padding-left: 16px;
+        color: #555;
+    }
+
+    ul {
+        margin: 12px 0;
+        padding-left: 24px;
+        color: #333;
+
+        li {
+            margin: 4px 0;
+            color: #444 !important;
+            list-style-type: none;
+
+            &::before {
+                content: '\2022' !important;
+                color: black !important;
+                font-weight: bold;
+                display: inline-block;
+                width: 10px;
+                height: 10px;
+            }
+        }
+    }
+
+    ol {
+        counter-reset: item;
+        list-style-type: none;
+        margin: 12px 0;
+        padding-left: 24px;
+        color: #333;
+        list-style: none;
+
+        li {
+            counter-increment: item;
+            margin-bottom: 10px;
+            margin: 4px 0;
+            color: #444;
+            list-style-type: none;
+
+            &::before {
+                content: counter(item) ". ";
+                font-weight: bold;
+                margin-right: 5px;
+                width: 10px;
+                height: 10px;
+            }
+        }
+    }
+
+    strong {
+        font-weight: 600;
+    }
+
+    em {
+        font-style: italic;
+    }
+
+    a {
+        color: #0074d9;
+        text-decoration: none;
+
+        &:hover {
+            text-decoration: underline;
+        }
+    }
+
+    pre {
+        background-color: #f7f7f7;
+        padding: 12px;
+        border: 1px solid #ddd;
+        border-radius: 3px;
+        overflow: auto;
+        font-family: 'Courier New', Courier, monospace;
+        font-size: 14px;
+        color: #333;
+    }
+
+    code {
+        font-family: 'Courier New', Courier, monospace;
+        font-size: 14px;
+        background-color: #f7f7f7;
+        padding: 2px 4px;
+    }
+
+    hr {
+        border: none;
+        border-top: 1px solid #ddd;
+        margin: 16px 0;
+    }
+
+    img {
+        max-width: 100%;
+        height: auto;
+        margin: 16px 0;
+        display: block;
+    }
+
+    .inline-code {
+        font-family: 'Courier New', Courier, monospace;
+        font-size: 14px;
+        background-color: #f7f7f7;
+        padding: 2px 4px;
+        color: #0074d9;
+    }
+
+    table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+
+    th,
+    td {
+        border: 1px solid #ddd;
+        padding: 8px;
+        text-align: left;
+    }
+
+    th {
+        background-color: #f2f2f2;
+        font-weight: 600;
+    }
+}

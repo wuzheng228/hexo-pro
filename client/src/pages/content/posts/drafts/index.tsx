@@ -1,8 +1,16 @@
-import React from "react"
-
-export default function Draft() {
+import React from 'react';
+import _ from 'lodash';
+import ArticleList from '../../components/ArticleList';
+function Drafts() {
 
     return (
-        <h1>draft</h1>
-    )
+        <div>
+            <div>
+                <ArticleList published={false} />
+            </div>
+        </div>
+
+    );
 }
+
+export default Drafts;

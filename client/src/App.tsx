@@ -1,4 +1,4 @@
-import React from "react"
+import React, { useEffect } from "react"
 import { createStore } from 'redux'
 import { Provider } from "react-redux"
 import { BrowserRouter, Route, Routes } from 'react-router-dom'
@@ -11,6 +11,8 @@ import { ConfigProvider, ConfigProviderProps } from "antd"
 import enUS from 'antd/locale/en_US'
 import zhCN from 'antd/locale/zh_CN'
 import { GlobalContext } from "./context"
+import service from "./utils/api"
+import checkLogin from "./utils/checkLogin"
 
 type Locale = ConfigProviderProps['locale'];
 
@@ -25,6 +27,29 @@ function App() {
         setLang: setLang
     }
 
+    function fetchUserInfo() {
+        store.dispatch({
+            type: 'update-userInfo',
+            payload: { userLoading: true },
+        });
+        service.get('/hexopro/api/userInfo').then((res) => {
+            store.dispatch({
+                type: 'update-userInfo',
+                payload: { userInfo: res.data, userLoading: false },
+            });
+        }).catch(err => {
+            console.log(err)
+        }
+        );
+    }
+
+    useEffect(() => {
+        if (checkLogin()) {
+            fetchUserInfo()
+        } else if (window.location.pathname.replace(/\//g, '') !== 'prologin') {
+            window.location.pathname = '/pro/login';
+        }
+    }, [])
 
     return (
         <BrowserRouter basename="/pro">

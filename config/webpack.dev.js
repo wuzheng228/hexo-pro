@@ -182,7 +182,32 @@ module.exports = {
             rewrites: [
                 { from: /\.*/, to: '/pro/index.html' },
             ]
-        }
+        },
+        proxy: [
+            {
+                context: ['/hexopro/api'],
+                target: 'http://localhost:4000',
+                timeout: 10000,
+                pathRewrite: {
+                    '/hexopro/api': '/hexopro/api'
+                },
+                changeOrigin: true,
+                secure: false
+
+            },
+            {
+                context: ['/images/'],
+
+                target: 'http://localhost:4000',
+                timeout: 10000,
+                pathRewrite: {
+                    '/images/': '/images/'
+                },
+                changeOrigin: true,
+                secure: false
+
+            }
+        ]
     },
     // 模式
     mode: "development",

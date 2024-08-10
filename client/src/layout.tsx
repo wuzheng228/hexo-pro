@@ -1,6 +1,6 @@
 import { Button, Menu, MenuProps } from 'antd'
 import Sider from 'antd/es/layout/Sider'
-import Layout, { Content, Footer, Header } from 'antd/es/layout/layout'
+import Layout, { Content } from 'antd/es/layout/layout'
 import React, { Children, useEffect, useMemo, useRef, useState } from 'react'
 import styles from './style/layout.module.less'
 import useRoute, { IRoute } from './routes'
@@ -10,6 +10,8 @@ import { ItemType, MenuItemType } from 'antd/es/menu/interface'
 import lazyload from './utils/lazyload'
 import { BrowserRouter, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import qs from 'query-string'
+import Navbar from './components/Navbar'
+import Footer from './components/Footer'
 
 type MenuItem = Required<MenuProps>['items'][number];
 
@@ -123,42 +125,55 @@ export default function PageLayout() {
 
     return (
         <Layout className={styles.layout}>
-            <Header >Header</Header>
+            <div>
+                <Navbar />
+            </div>
             <Layout>
-                <Sider>
-                    <div>
-                        <Menu
-                            selectedKeys={selectedKeys}
-                            onClick={onClickItem}
-                            mode={"inline"}
-                            items={reanderRoutes()(routes, 1)}
-                        >
-                        </Menu>
-                    </div>
+                <Sider className={styles['layout-sider']}>
+                    <Menu
+                        style={{ height: '100%' }}
+                        selectedKeys={selectedKeys}
+                        onClick={onClickItem}
+                        mode={"inline"}
+                        items={reanderRoutes()(routes, 1)}
+                    >
+                    </Menu>
                 </Sider>
-                <Content >
-                    <Routes>
-                        {
-                            flatternRoutes.map((route, index) => {
-                                const rout = (<Route
-                                    key={index}
-                                    path={`/${route.key}`}
-                                    element={route.component.render()}
-                                />)
-                                console.log('rout ===>', route, 'path===>', `/${route.key}`)
-                                return rout
-                            })
-                        }
-                        <Route path="/"
-                            element={lazyload(() => import(`./pages/${defaultRoute}`)).render()}
-                        />
-                        <Route path="*"
-                            element={lazyload(() => import(`./pages/${defaultRoute}`)).render()}
-                        />
-                    </Routes>
-                </Content>
+                <Layout className={styles['layout-content']}>
+                    <div className={styles['layout-content-wrapper']}>
+                        <Content>
+                            <Routes>
+                                {
+                                    flatternRoutes.map((route, index) => {
+                                        const rout = (<Route
+                                            key={index}
+                                            path={`/${route.key}`}
+                                            element={route.component.render()}
+                                        />)
+                                        console.log('rout ===>', route, 'path===>', `/${route.key}`)
+                                        return rout
+                                    })
+                                }
+                                <Route path="/"
+                                    element={lazyload(() => import(`./pages/${defaultRoute}`)).render()}
+                                />
+                                <Route
+                                    path="/post/:_id"
+                                    element={lazyload(() => import('./pages/content/posts/post')).render()}
+                                />
+                                <Route
+                                    path="/page/:_id"
+                                    element={lazyload(() => import('./pages/content/pages/page')).render()}
+                                />
+                                <Route path="*"
+                                    element={lazyload(() => import(`./pages/${defaultRoute}`)).render()}
+                                />
+                            </Routes>
+                        </Content>
+                    </div>
+                    <Footer />
+                </Layout>
             </Layout>
-            <Footer>Footer</Footer>
         </Layout>
     )
 }
