@@ -4,7 +4,7 @@ import Layout, { Content } from 'antd/es/layout/layout'
 import React, { Children, useEffect, useMemo, useRef, useState } from 'react'
 import styles from './style/layout.module.less'
 import useRoute, { IRoute } from './routes'
-import { EditOutlined, MailOutlined } from '@ant-design/icons'
+import { EditOutlined, MailOutlined, MenuFoldOutlined, MenuUnfoldOutlined } from '@ant-design/icons'
 import useLocale from './hooks/useLocale'
 import { ItemType, MenuItemType } from 'antd/es/menu/interface'
 import lazyload from './utils/lazyload'
@@ -17,7 +17,7 @@ type MenuItem = Required<MenuProps>['items'][number];
 
 function getIconFromKey(key: string) {
     switch (key) {
-        case '':
+        case 'posts':
             return <EditOutlined />
         default:
             return <div className={styles['icon-empty']}></div>
@@ -56,6 +56,7 @@ export default function PageLayout() {
     const currentComponent = qs.parseUrl(location.pathname).url.slice(1)
     const [routes, defaultRoute] = useRoute()
     const defaultSelectedKeys = [currentComponent || defaultRoute]
+    const [collapsed, setCollapsed] = useState(false)
 
     const [selectedKeys, setSelectedKeys] = useState<string[]>(defaultSelectedKeys)
 
@@ -119,6 +120,10 @@ export default function PageLayout() {
         setSelectedKeys(newSelectedKeys)
     }
 
+    function toggleCollapsed() {
+        setCollapsed(!collapsed)
+    }
+
     useEffect(() => {
         updateMenuStatus()
     }, [location.pathname])
@@ -129,7 +134,10 @@ export default function PageLayout() {
                 <Navbar />
             </div>
             <Layout>
-                <Sider className={styles['layout-sider']}>
+                <Sider className={styles['layout-sider']} collapsed={collapsed}>
+                    <Button type="default" onClick={toggleCollapsed} className={styles['collapse-btn']} size='small' >
+                        {collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+                    </Button>
                     <Menu
                         style={{ height: '100%' }}
                         selectedKeys={selectedKeys}
