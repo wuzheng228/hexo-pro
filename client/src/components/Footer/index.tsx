@@ -4,6 +4,8 @@ import styles from './style/index.module.less'
 
 export default function Footer() {
     return (
-        <Foo className={styles.footer}>Hexo pro</Foo>
+        <div>
+            <Foo className={styles.footer}>Hexo pro</Foo>
+        </div>
     )
 }

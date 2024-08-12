@@ -46,7 +46,8 @@
     "react-refresh": "^0.14.2",
     "react-router-dom": "^6.24.0",
     "redux": "^4.1.2",
-    "thememirror": "^2.0.1"
+    "thememirror": "^2.0.1",
+    "vditor": "^3.10.5"
   },
   "devDependencies": {
     "@babel/core": "^7.24.7",

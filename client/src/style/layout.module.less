@@ -25,15 +25,20 @@
 }
 
 .layout-content {
-    position: relative;
     min-width: @layout-max-width;
-    min-height: calc(100vh - 40px - @nav-size-height);
+    max-height: calc(100vh - @nav-size-height);
     transition: padding-left 0.2s;
     box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
 }
 
 .layout-content-wrapper {
     padding: 16px 20px 0px 20px;
+    height: 100%;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
 }
 
 .collapse-btn {
