@@ -40,21 +40,55 @@ function staticMiddleware(rootDir) {
     };
 }
 
+
+function buildIndex() {
+    class BlogInfo {
+        constructor(title, content, isPage, isDraft, id) {
+            this.title = title
+            this.content = content
+            this.isPage = isPage
+            this.isDraft = isDraft
+            this.id = id
+        }
+    }
+
+    const posts = hexo.model('Post').toArray()
+    const pages = hexo.model('Page').toArray()
+
+    const blogInfoList = []
+
+    posts.forEach((post, _) => {
+        blogInfoList.push(new BlogInfo(post.title, post.content, false, post.isDraft, post._id))
+    })
+
+    pages.forEach((page, _) => {
+        blogInfoList.push(new BlogInfo(page.title, page.content, true, false, page._id))
+    })
+
+    fs.writeFileSync(path.join(hexo.base_dir, 'blogInfoList.json'), JSON.stringify(blogInfoList))
+}
+
 const serve = serveStatic(path.join(__dirname, 'www'))
 
 hexo.extend.filter.register('before_generate', function () {
     // 在生成之前执行的逻辑
-    console.log('Hexo pro 插件正在运行...');
-    console.log(hexo.locals.get("posts"))
+});
+
+hexo.extend.filter.register('after_init', async function () {
+    await hexo.load(); // 确保所有数据已加载
+    // 将博客数据写入到文件当中
+    buildIndex();
+});
+
+hexo.extend.filter.register('after_post_render', function (data) {
+    buildIndex();
+    return data;
 });
 
 hexo.extend.filter.register('server_middleware', function (app) {
 
-
-
+    console.log("posts=>", hexo.locals.get("posts"))
     // 检查请求的URL是否以静态文件后缀结尾
-
-
     app.use((req, res, next) => {
         // 将所有请求重定向到你的应用程序的入口点
         if (req.originalUrl.startsWith('/pro')) {
@@ -107,6 +141,8 @@ hexo.extend.filter.register('server_middleware', function (app) {
             res.end(JSON.stringify({ code: 500, msg: 'unknown err:' + err }))
         }
     })
+
+
 });
 
 

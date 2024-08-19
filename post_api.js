@@ -7,6 +7,9 @@ var updateAny = require('./update'),
 var extend = require('extend')
 const _ = require('lodash')
 var hfm = require('hexo-front-matter')
+const Fuse = require('fuse.js')
+const cheerio = require('cheerio')
+
 
 module.exports = function (app, hexo, use) {
     // reads admin panel settings from _admin-config.yml
@@ -95,6 +98,79 @@ module.exports = function (app, hexo, use) {
             res.done(post)
         }, hexo)
     }
+    function loadBlogInfoList() {
+        const blogInfoList = fs.readFileSync(path.join(hexo.base_dir, 'blogInfoList.json'));
+        return JSON.parse(blogInfoList);
+    }
+    function getHighlightedTextFromHtml(content, searchPattern, contextLength = 40) {
+        if (!content || content.trim() === '') {
+            return '...'
+        }
+        // 使用 cheerio 移除 HTML 标签
+        const $ = cheerio.load(content);
+        content = $.text();
+
+        content = content.replace(/[\n\r]+/g, ' ').replace(/\s+/g, ' ').trim();
+
+        // 安全地处理搜索模式
+        const safePattern = searchPattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); // 转义特殊字符
+        const regex = new RegExp(safePattern, 'gi');
+
+        const matchIndices = [...content.matchAll(regex)].map(m => m.index);
+
+        // 计算匹配项之间的平均距离
+        const totalDistance = matchIndices.slice(1).reduce((acc, index, i) => acc + (index - matchIndices[i]), 0);
+        const averageDistance = totalDistance / (matchIndices.length - 1);
+        // 根据平均距离调整 contextLength
+        contextLength = averageDistance < 50 ? Math.min(80, content.length) : Math.min(10, content.length);
+
+        if (matchIndices.length === 0)
+            return content.substring(0, Math.min(content.length, 300)) + '...';
+
+        // 处理多个匹配项
+        const highlightedTexts = matchIndices.map(index => {
+            const start = Math.max(index - contextLength, 0);
+            const end = Math.min(index + searchPattern.length + contextLength, content.length);
+            let context = content.substring(start, end);
+
+            // 高亮匹配的部分
+            return context.replace(regex, '<mark>$&</mark>');
+        });
+
+        const maxContextLength = 300;
+        let ans = []
+        for (let i = 0; i < highlightedTexts.length; i++) {
+            ans.push(highlightedTexts[i]);
+            if (ans.length > maxContextLength) {
+                return ans
+            }
+        }
+        return ans.join('... ') + '...'
+    }
+    use('blog/search', function (req, res) {
+        const fuseOptions = {
+            includeScore: true,
+            keys: ['title', 'content']
+        };
+
+        const blogInfoList = loadBlogInfoList()
+        const fuse = new Fuse(blogInfoList, fuseOptions);
+
+        const results = fuse.search(req.body.searchPattern)
+        // 返回搜索结果
+        const enhancedResults = results.map(result => {
+            const { item } = result;
+            const highlightedText = getHighlightedTextFromHtml(item.content, req.body.searchPattern);
+            return {
+                id: item.id,
+                isPage: item.isPage,
+                isDraft: item.isDraft,
+                title: item.title,
+                context: highlightedText,
+            }
+        })
+        res.done({ code: 0, data: enhancedResults })
+    });
     use('posts/list', function (req, res) {
         const parsedUrl = url.parse(req.url, true);
         const queryParams = parsedUrl.query;

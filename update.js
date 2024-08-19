@@ -19,7 +19,10 @@ var path = require('path'),
 module.exports = function (model, id, update, callback, hexo) {
 
     const newFrontMatter = update.frontMatter
-    delete update.frontMatter
+    if (newFrontMatter) {
+        delete update.frontMatter
+    }
+
     console.log(newFrontMatter)
     function removeExtname(str) {
         return str.substring(0, str.length - path.extname(str).length);
