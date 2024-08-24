@@ -9,6 +9,7 @@ const _ = require('lodash')
 var hfm = require('hexo-front-matter')
 const Fuse = require('fuse.js')
 const cheerio = require('cheerio')
+const { v4: uuidv4 } = require('uuid');
 
 
 module.exports = function (app, hexo, use) {
@@ -43,8 +44,9 @@ module.exports = function (app, hexo, use) {
         }
     }
     function addIsDraft(post) {
-        post.isDraft = post.source.indexOf('_draft') === 0
-        post.isDiscarded = post.source.indexOf('_discarded') === 0
+        if (!post) return post
+        post.isDraft = post.source?.indexOf('_draft') === 0
+        post.isDiscarded = post.source?.indexOf('_discarded') === 0
         post.updated = formatDateTime(post.updated)
         post.date = formatDateTime(post.date)
         return post
@@ -147,6 +149,7 @@ module.exports = function (app, hexo, use) {
         }
         return ans.join('... ') + '...'
     }
+
     use('blog/search', function (req, res) {
         const fuseOptions = {
             includeScore: true,
@@ -265,9 +268,9 @@ module.exports = function (app, hexo, use) {
             // console.log(post.tags)
             // console.log(post.categories)
             // console.log(post.top_img)
-            var split = hfm.split(post.raw)
-            // console.log('-----> split data', split.data)
-            var parsed = hfm.parse([split.data, '---'].join('\n'))
+            // var split = hfm.split(post.raw)
+            // // console.log('-----> split data', split.data)
+            // var parsed = hfm.parse([split.data, '---'].join('\n'))
             // console.log('-----> split parsed', parsed)
             return res.done(addIsDraft(post))
         }
@@ -299,7 +302,10 @@ module.exports = function (app, hexo, use) {
         var id = last
         if (req.method === 'GET') {
             var post = hexo.model('Post').get(id)
-            if (!post) next()
+            if (!post) {
+                next()
+                return
+            }
             var split = hfm.split(post.raw)
             // console.log('-----> split data', split.data)
             var parsed = hfm.parse([split.data, '---'].join('\n'))
@@ -338,34 +344,61 @@ module.exports = function (app, hexo, use) {
     use('settings/list', function (req, res, next) {
         res.done(getSettings())
     })
-    use('images/upload', function (req, res, next) {
-        if (req.method !== 'POST') return next()
+    use('images/upload', async function (req, res, next) {
+        if (req.method !== 'POST') return next();
         if (!req.body) {
-            return res.send(400, 'No post body given')
+            return res.send(400, 'No post body given');
         }
         if (!req.body.data) {
-            return res.send(400, 'No data given')
+            return res.send(400, 'No data given');
         }
-        var imagePath = '/images'
-        var imagePrefix = 'pasted-'
 
-        var msg = 'upload successful'
-        var timestamp = new Date().getTime()
-        var filename = imagePrefix + timestamp + '.png'
+        const imagePath = '/images';
+        let imagePrefix = 'pasted-';
+        if (req.body.filename) {
+            imagePrefix = req.body.filename
+        }
 
-        filename = path.join(imagePath, filename)
-        var outpath = path.join(hexo.source_dir, filename)
+        // function generateShortId() {
+        //     const uuid = uuidv4().replace(/-/g, ''); // 生成 UUID 并去除分隔符
+        //     return uuid.substring(0, 10); // 截取前10个字符
+        // }
 
-        var dataURI = req.body.data.slice('data:image/png;base64,'.length)
-        var buf = new Buffer(dataURI, 'base64')
-        hexo.log.d(`saving image to ${outpath}`)
-        fs.writeFile(outpath, buf)
-        var imageSrc = path.join((hexo.config.root) + filename).replace(/\\/g, '/')
-        hexo.source.process().then(function () {
+        const msg = 'upload successful';
+        // const shortId = generateShortId(); // 生成短唯一标识符
+        const filename = `${imagePrefix}-${uuidv4()}-${Date.now()}.png`;
+
+        const outpath = path.join(hexo.source_dir, imagePath, filename);
+
+        // Ensure directory exists
+        if (!fs.existsSync(path.dirname(outpath))) {
+            fs.mkdirsSync(path.dirname(outpath));
+        }
+
+        try {
+            // Strip out the data prefix for base64 encoded images
+            const dataURI = req.body.data.replace(/^data:image\/\w+;base64,/, '');
+            const buf = Buffer.from(dataURI, 'base64');
+
+            console.log(`Saving image to ${outpath}`);
+
+            // Asynchronous write with a promise
+            await fs.writeFile(outpath, buf);
+
+            // Generate the correct src path
+            const imageSrc = `${imagePath}/${filename}`;
+
+            // Process the source to ensure it is correctly added to Hexo's file structure
+            // await hexo.source.process();
+            // throw new Error('hexo.source.process() should have resolved the promise');
             res.done({
                 src: imageSrc,
                 msg: msg
-            })
-        });
-    })
+            });
+        } catch (error) {
+            hexo.log.e(`Error saving image: ${error.message}`);
+            return res.send(500, 'Failed to save image');
+        }
+    });
+
 }

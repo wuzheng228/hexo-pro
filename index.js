@@ -58,7 +58,7 @@ function buildIndex() {
     const blogInfoList = []
 
     posts.forEach((post, _) => {
-        blogInfoList.push(new BlogInfo(post.title, post.content, false, post.isDraft, post._id))
+        blogInfoList.push(new BlogInfo(post.title, post.content, false, !post.published, post._id))
     })
 
     pages.forEach((page, _) => {
@@ -87,7 +87,7 @@ hexo.extend.filter.register('after_post_render', function (data) {
 
 hexo.extend.filter.register('server_middleware', function (app) {
 
-    console.log("posts=>", hexo.locals.get("posts"))
+    // console.log("posts=>", hexo.locals.get("posts"))
     // 检查请求的URL是否以静态文件后缀结尾
     app.use((req, res, next) => {
         // 将所有请求重定向到你的应用程序的入口点
