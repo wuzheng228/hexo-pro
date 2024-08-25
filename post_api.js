@@ -385,8 +385,10 @@ module.exports = function (app, hexo, use) {
             // Asynchronous write with a promise
             await fs.writeFile(outpath, buf);
 
+            const encodedFilename = encodeURIComponent(filename)
             // Generate the correct src path
-            const imageSrc = `${imagePath}/${filename}`;
+            const imageSrc = `${imagePath}/${encodedFilename}`;
+
 
             // Process the source to ensure it is correctly added to Hexo's file structure
             // await hexo.source.process();
