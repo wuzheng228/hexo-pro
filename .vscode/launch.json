@@ -5,8 +5,8 @@
             "type": "node",
             "request": "launch",
             "name": "调试 Hexo",
-            "program": "E:\\docker-warms\\compose\\hexo-dev\\blog\\debug.js", // 指定调试脚本的路径
-            "cwd": "./", // 设置工作目录
+            "program": "/Users/bytedance/code/node/blog/debug.js", // 指定调试脚本的路径
+            "cwd": "/Users/bytedance/code/node/blog", // 设置工作目录
             "runtimeArgs": [
                 "--nolazy" // 可选：提高调试性能
             ],

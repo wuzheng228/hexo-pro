@@ -233,7 +233,7 @@ module.exports = function (app, hexo, use) {
                 hexo.source.process([source]).then(function () {
                     var post = _.cloneDeep(hexo.model('Post').findOne({ source: source.replace(/\\/g, '\/') }))
 
-                    res.done(addIsDraft(post));
+                    return res.done(addIsDraft(post));
                 });
             });
     })

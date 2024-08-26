@@ -75,7 +75,7 @@ module.exports = function (app, hexo, use) {
 
                 hexo.source.process([source]).then(function () {
                     var page = hexo.model('Page').findOne({ source: source })
-                    res.done(addIsDraft(page));
+                    return res.done(addIsDraft(page));
                 });
             });
     });

@@ -71,6 +71,7 @@ function buildIndex() {
 const serve = serveStatic(path.join(__dirname, 'www'))
 
 hexo.extend.filter.register('before_generate', function () {
+    buildIndex();
     // 在生成之前执行的逻辑
 });
 
@@ -81,7 +82,6 @@ hexo.extend.filter.register('after_init', async function () {
 });
 
 hexo.extend.filter.register('after_post_render', function (data) {
-    buildIndex();
     return data;
 });
 
@@ -136,7 +136,7 @@ hexo.extend.filter.register('server_middleware', function (app) {
             res.statusCode = 200
             res.end(JSON.stringify({ code: 401, msg: 'token unauthrized' }))
         } else {
-            res.setHeader('Content-type', 'application/json')
+            // res.setHeader('Content-type', 'application/json')
             res.statusCode = 500
             res.end(JSON.stringify({ code: 500, msg: 'unknown err:' + err }))
         }
