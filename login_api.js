@@ -19,8 +19,8 @@ module.exports = function (app, hexo, use, needLogin) {
 
     use('userInfo', function (req, res, next) {
         if (!needLogin) {
-            res.done({ username: 'HexoPRO', avatar: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mJ8BAEAAAAALAAD4Z8AAAAASUVORK5CYII=' })
+            returnres.done({ username: 'HexoPRO', avatar: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mJ8BAEAAAAALAAD4Z8AAAAASUVORK5CYII=' })
         }
-        res.done({ username: hexo.config.hexo_pro.username, avatar: hexo.config.hexo_pro.avatar })
+        return res.done({ username: hexo.config.hexo_pro.username, avatar: hexo.config.hexo_pro.avatar })
     })
 }
