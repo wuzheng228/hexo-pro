@@ -6,7 +6,14 @@
 一开始是想用SpringBoot或者Go Hertz等后台框架来搭建后台服务，nginx托管静态文件，后台服务维护markdown文件，通过hexo命令行渲染更新静态文件，但是想了想这样做反而更复杂了，也看过github上开源的Hexo博客管理系统比如Qexo，感觉部署起来有点麻烦，还是直接装hexo插件来的方便，不会引入更多的东西。
 
 我之前学的基本上都是后端，前端属于入门的水平，如果有大佬对这个项目感兴趣欢迎一起来贡献，目前这个版本能满足日常编写发布博客的需求，后续会慢慢迭代
+
 走过路过的朋友、个人博客爱好者点个star支持下吧 thanks~~
+
+# 交流群
+欢迎加入QQ群，交流Hexo的使用心得，分享你的Hexo经验
+
+1009585669
+![qq group](docs/qq-group.png?raw=true)
 
 # 支持的Hexo版本
 Hexo pro 插件支持 Hexo 3.x
@@ -14,6 +21,7 @@ Hexo pro 插件支持 Hexo 3.x
 ![posts view](docs/login-page.png?raw=true)
 ![posts view](docs/home-page.png?raw=true)
 ![posts view](docs/editor-page.png?raw=true)
+
 # 特性
 - 支持创建编写博客
 - 支持创建编写页面
@@ -26,7 +34,6 @@ Hexo pro 插件支持 Hexo 3.x
 客户端的代码请看另外一个仓库: https://github.com/wuzheng228/hexo-pro-client
 
 # 功能更新时间线
-
 | 日期       | 版本   | 更新内容                                                                        |
 | ---------- | ------ | ------------------------------------------------------------------------------- |
 | 2024-08-29 | v1.1.0 | - 优化编辑器<br>- 优化暗黑模式<br>- 新增全局搜索<br> 优化图片上传，支持批量上传 |
