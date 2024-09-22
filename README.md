@@ -10,10 +10,10 @@
 走过路过的朋友、个人博客爱好者点个star支持下吧 thanks~~
 
 # 交流群
-欢迎加入QQ群，交流Hexo的使用心得，分享你的Hexo经验
+欢迎加入QQ群1009585669，交流Hexo的使用心得，分享你的Hexo经验
 
-1009585669
-![qq group](docs/qq-group.png?raw=true)
+
+<img src="docs/qq-group.png" alt="Login Page" width="250" />
 
 # 支持的Hexo版本
 Hexo pro 插件支持 Hexo 3.x
@@ -29,6 +29,7 @@ Hexo pro 插件支持 Hexo 3.x
 - 支持post、page的front-matter编辑
 - 支持文章的全局搜索
 - 暗黑模式体验
+- 国际化
 
 这个插件其实是采用前后端分离的方式编写的，这个插件在hexo的server当中添加了中间件，其实是作为后端，代理前端打包的静态文件，静态文件存放在www文件夹当中。
 客户端的代码请看另外一个仓库: https://github.com/wuzheng228/hexo-pro-client
