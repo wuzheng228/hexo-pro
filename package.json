@@ -14,7 +14,7 @@
     "url": "git+https://github.com/wuzheng228/hexo-pro.git"
   },
   "author": "wuzheng",
-  "license": "ISC",
+  "license": "MIT",
   "bugs": {
     "url": "https://github.com/wuzheng228/hexo-pro/issues"
   },
