@@ -189,7 +189,7 @@ module.exports = function (app, hexo, use) {
         if (id === 'pages' || !id) return next()
         if (req.method === 'GET') {
             id = utils.base64Decode(id)
-            var page = hexo.model('Page').filter(p => p.source === id)
+            var page = hexo.model('Page').filter(p => p.permalink === id)
             if (!page) return next()
             page = page.data[0]
             return res.done(addIsDraft(page))
@@ -220,7 +220,7 @@ module.exports = function (app, hexo, use) {
         var id = last
         if (req.method === 'GET') {
             id = utils.base64Decode(id)
-            var post = hexo.model('Page').filter(p => p.source === id).data[0]
+            var post = hexo.model('Page').filter(p => p.permalink === id).data[0]
             if (!post) next()
             var split = hfm.split(post.raw)
             var parsed = hfm.parse([split.data, '---'].join('\n'))
