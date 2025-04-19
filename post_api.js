@@ -190,34 +190,85 @@ module.exports = function (app, hexo, use) {
 
         const matchIndices = [...content.matchAll(regex)].map(m => m.index);
 
-        // 计算匹配项之间的平均距离
-        const totalDistance = matchIndices.slice(1).reduce((acc, index, i) => acc + (index - matchIndices[i]), 0);
-        const averageDistance = totalDistance / (matchIndices.length - 1);
-        // 根据平均距离调整 contextLength
-        contextLength = averageDistance < 50 ? Math.min(80, content.length) : Math.min(10, content.length);
-
+        // 如果没有匹配项，返回内容的前300个字符
         if (matchIndices.length === 0)
             return content.substring(0, Math.min(content.length, 300)) + '...';
 
-        // 处理多个匹配项
-        const highlightedTexts = matchIndices.map(index => {
+        // 计算匹配项之间的平均距离
+        const totalDistance = matchIndices.slice(1).reduce((acc, index, i) => acc + (index - matchIndices[i]), 0);
+        const averageDistance = matchIndices.length > 1 ? totalDistance / (matchIndices.length - 1) : 0;
+
+        // 根据平均距离调整 contextLength
+        contextLength = averageDistance < 50 ? Math.min(80, content.length) : Math.min(40, content.length);
+
+        // 创建匹配片段
+        let segments = [];
+        let processedIndices = new Set();
+
+        // 首先处理彼此接近的匹配项，将它们合并为一个片段
+        for (let i = 0; i < matchIndices.length; i++) {
+            if (processedIndices.has(i)) continue;
+
+            const currentIndex = matchIndices[i];
+            let endIndex = currentIndex;
+            let j = i + 1;
+
+            // 查找接近的匹配项
+            while (j < matchIndices.length && matchIndices[j] - endIndex < contextLength * 2) {
+                endIndex = matchIndices[j];
+                processedIndices.add(j);
+                j++;
+            }
+
+            // 创建包含多个匹配项的片段
+            const start = Math.max(currentIndex - contextLength, 0);
+            const end = Math.min(endIndex + searchPattern.length + contextLength, content.length);
+            let segment = content.substring(start, end);
+
+            // 计算此片段中包含的匹配项数量
+            const matchCount = segment.match(regex)?.length || 0;
+
+            segments.push({
+                text: segment.replace(regex, '<mark>$&</mark>'),
+                matchCount: matchCount,
+                originalIndex: i
+            });
+        }
+
+        // 处理剩余的单个匹配项
+        for (let i = 0; i < matchIndices.length; i++) {
+            if (processedIndices.has(i)) continue;
+
+            const index = matchIndices[i];
             const start = Math.max(index - contextLength, 0);
             const end = Math.min(index + searchPattern.length + contextLength, content.length);
-            let context = content.substring(start, end);
+            let segment = content.substring(start, end);
 
-            // 高亮匹配的部分
-            return context.replace(regex, '<mark>$&</mark>');
+            segments.push({
+                text: segment.replace(regex, '<mark>$&</mark>'),
+                matchCount: 1,
+                originalIndex: i
+            });
+        }
+
+        // 按匹配数量排序，优先显示包含多个匹配项的片段
+        segments.sort((a, b) => {
+            // 首先按匹配数量降序排序
+            if (b.matchCount !== a.matchCount) {
+                return b.matchCount - a.matchCount;
+            }
+            // 匹配数量相同时，按原始顺序排序
+            return a.originalIndex - b.originalIndex;
         });
 
-        const maxContextLength = 300;
-        let ans = []
-        for (let i = 0; i < highlightedTexts.length; i++) {
-            ans.push(highlightedTexts[i]);
-            if (ans.length > maxContextLength) {
-                return ans
-            }
-        }
-        return ans.join('... ') + '...'
+        // 限制片段数量，最多显示3个片段
+        segments = segments.slice(0, 3);
+
+        // 按原始顺序重新排序片段
+        segments.sort((a, b) => a.originalIndex - b.originalIndex);
+
+        // 组合最终结果
+        return segments.map(s => s.text).join('... ') + '...';
     }
 
     use('blog/search', function (req, res) {
