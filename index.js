@@ -119,8 +119,18 @@ hexo.extend.filter.register('server_middleware', function (app) {
     });
     app.use('/pro', serve);
 
+    console.log(hexo.config.root)
+
+    let root = hexo.config.root
+    if (!root) {
+        root = ''
+    }
+
+    const unlessPaths = [hexo.config.root + 'hexopro/api/login', hexo.config.root + 'pro']
+    console.log(unlessPaths)
+
     if (needLogin) {
-        app.use('/hexopro/api', jwt({ secret: hexo.config.hexo_pro.secret, algorithms: ["HS256"] }).unless({ path: ['/hexopro/api/login', '/pro'] }))
+        app.use(hexo.config.root + 'hexopro/api/', jwt({ secret: hexo.config.hexo_pro.secret, algorithms: ["HS256"] }).unless({ path:  unlessPaths}))
     }
 
 

@@ -28,6 +28,7 @@
     "express-jwt": "^8.4.1",
     "extend": "^3.0.2",
     "flatted": "^3.2.7",
+    "fs-extra": "^11.3.0",
     "fuse.js": "^7.0.0",
     "hexo-front-matter": "^4.1.0",
     "hexo-fs": "^4.1.1",

@@ -3,6 +3,7 @@ var path = require('path'),
     hfm = require('hexo-front-matter'),
     fs = require('hexo-fs'),
     extend = require('extend');
+const utils = require('./utils');
 //  yfm = util.yfm,
 //  escape = util.escape;
 
@@ -16,8 +17,9 @@ var path = require('path'),
  * @param {Object} update attributes to update
  * @param {Function} callback
  */
-module.exports = function (model, id, update, callback, hexo) {
 
+module.exports = function (model, unimark, update, callback, hexo) {
+    unimark = utils.base64Decode(unimark)
     const newFrontMatter = update.frontMatter
     if (newFrontMatter) {
         delete update.frontMatter
@@ -27,15 +29,19 @@ module.exports = function (model, id, update, callback, hexo) {
     function removeExtname(str) {
         return str.substring(0, str.length - path.extname(str).length);
     }
-    var post = hexo.model(model).get(id)
+    var post = hexo.model(model).filter(post => {
+        
+        return unimark === post.permalink;
+    }).data[0];
     if (!post) {
         return callback('Post not found');
     }
     var config = hexo.config,
         layout = post.layout = (post.layout || config.default_layout).toLowerCase(),
-        slug = post.slug = hfm.escape(post.slug || post.title, config.filename_case),
+        // 添加时间戳确保唯一性
+        slug = post.slug = `${hfm.escape(post.slug || post.title, config.filename_case)}-${Date.now()}`,
         date = post.date = post.date ? moment(post.date) : moment();
-
+    // console.log("post.raw:", post.raw)
     var split = hfm.split(post.raw),
         frontMatter = split.data
     compiled = hfm.parse([frontMatter, '---', split.content].join('\n'));
@@ -78,6 +84,7 @@ module.exports = function (model, id, update, callback, hexo) {
     var raw = hfm.stringify(compiled);
     update.raw = raw
     update.updated = moment()
+    update.slug = slug
 
     // tags and cats are only getters now. ~ see: /hexo/lib/models/post.js
     if (typeof update.tags !== 'undefined') {
@@ -91,28 +98,25 @@ module.exports = function (model, id, update, callback, hexo) {
 
     extend(post, update)
 
-    post.save(function () {
-        //  console.log(post.full_source, post.source)
-        fs.writeFile(full_source, raw);
-
-        console.log(full_source, post.source)
-        if (full_source !== prev_full) {
-            fs.unlinkSync(prev_full)
-            // move asset dir
-            var assetPrev = removeExtname(prev_full);
-            var assetDest = removeExtname(full_source);
-            fs.exists(assetPrev).then(function (exist) {
-                if (exist) {
-                    fs.copyDir(assetPrev, assetDest).then(function () {
-                        fs.rmdir(assetPrev);
-                    });
-                }
-            });
-        }
-        hexo.source.process([post.source]).then(function () {
+    post.save().then(async () => {
+        fs.writeFileSync(full_source, raw);
+        hexo.log.info('文章保存成功！');
+        await hexo.source.process().then(function () {
             //      console.log(post.full_source, post.source)
-            callback(null, hexo.model(model).get(id));
+            callback(null, hexo.model(model).filter(post => {
+                if (model === 'Post') {
+                    const permalink = post.permalink;
+                    return unimark === permalink;
+                } else if (model === 'Page') {
+                    const source = base64Decode(unimark)
+                    return source === post.source;
+                }
+            }).data[0]);
         });
-
+    }).catch(err => {
+        hexo.log.error('保存失败:', err);
+        callback(err, null);
     });
+
+
 }

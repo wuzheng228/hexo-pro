@@ -1,6 +1,7 @@
 var path = require('path')
 var url = require('url')
 var fs = require('hexo-fs')
+var fse = require('fs-extra')
 var yml = require('js-yaml')
 var updateAny = require('./update'),
     update = updateAny.bind(null, 'Post')
@@ -10,6 +11,8 @@ var hfm = require('hexo-front-matter')
 const Fuse = require('fuse.js')
 const cheerio = require('cheerio')
 const { v4: uuidv4 } = require('uuid');
+
+const utils = require('./utils');
 
 
 module.exports = function (app, hexo, use) {
@@ -51,31 +54,73 @@ module.exports = function (app, hexo, use) {
         post.date = formatDateTime(post.date)
         return post
     }
-    function publish(id, body, res) {
-        var post = hexo.model('Post').get(id)
-        if (!post) return res.send(404, "Post not found")
-        var newSource = '_posts/' + post.source.slice('_drafts/'.length)
-        update(id, { source: newSource }, function (err, post) {
-            if (err) {
-                return res.send(400, err);
-            }
-            post = _.cloneDeep(post)
-            res.done(addIsDraft(post))
-        }, hexo)
+    function publish(permalink, body, res) {
+        // 优先通过ID查找，找不到时通过文件名查找
+        permalink = utils.base64Decode(permalink)
+        var post = hexo.model('Post').filter(p => p.permalink === permalink).data[0];
+
+        if (!post) return res.send(404, "Post not found");
+
+        const originalFilename = path.basename(post.source);
+        const originalDirname = path.dirname(post.source);
+        const newSource = '_posts/' + originalFilename;
+        const oldPath = path.join(hexo.source_dir, post.source);
+        const newDir = path.join(hexo.source_dir, path.dirname(newSource));
+        const newPath = path.join(newDir, originalFilename);
+
+        // 使用 fse 确保目录存在
+        fse.ensureDir(newDir, err => {
+            if (err) return res.send(500, `Failed to create directory: ${err.message}`);
+
+            // 使用 fse 移动文件到新路径下
+            fse.move(oldPath, newPath, { overwrite: false }, err => {
+                if (err) return res.send(500, `File operation failed: ${err.message}`);
+
+                // 更新数据模型中的 post 源路径
+                post.source = newSource;
+                post = _.cloneDeep(post);
+
+                // 刷新 Hexo 数据
+                // 直接更新数据库中的source路径
+                hexo.model('Post').update(post._id, { source: newSource });
+                res.done(addIsDraft(post));
+            });
+        });
     }
 
-    function unpublish(id, body, res) {
-        var post = hexo.model('Post').get(id)
-        if (!post) return res.send(404, "Post not found")
-        var newSource = '_drafts/' + post.source.slice('_posts/'.length)
-        update(id, { source: newSource }, function (err, post) {
-            if (err) {
-                return res.send(400, err);
-            }
-            post = _.cloneDeep(post)
-            res.done(addIsDraft(post))
-        }, hexo)
+    function unpublish(permalink, body, res) {
+        // 优先通过ID查找，找不到时通过文件名查找
+        permalink = utils.base64Decode(permalink)
+        var post = hexo.model('Post').filter(p => p.permalink === permalink).data[0];
+        if (!post) return res.send(404, "Post not found");
+
+        const originalFilename = path.basename(post.source);
+        const originalDirname = path.dirname(post.source);
+        const newSource = '_drafts/' + originalFilename;
+        const oldPath = path.join(hexo.source_dir, post.source);
+        const newDir = path.join(hexo.source_dir, path.dirname(newSource));
+        const newPath = path.join(newDir, originalFilename);
+
+        // 使用 fse 确保目录存在
+        fse.ensureDir(newDir, err => {
+            if (err) return res.send(500, `Failed to create directory: ${err.message}`);
+
+            // 使用 fse 移动文件到新路径下
+            fse.move(oldPath, newPath, { overwrite: false }, err => {
+                if (err) return res.send(500, `File operation failed: ${err.message}`);
+
+                // 更新数据模型中的 post 源路径
+                post.source = newSource;
+                post = _.cloneDeep(post);
+
+                // 刷新 Hexo 数据
+                // 直接更新数据库中的source路径
+                hexo.model('Post').update(post._id, { source: newSource });
+                res.done(addIsDraft(post));
+            });
+        });
     }
+
     function formatDateTime(dateString) {
         const date = new Date(dateString);
 
@@ -89,17 +134,42 @@ module.exports = function (app, hexo, use) {
         return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
     }
     function remove(id, body, res) {
-        var post = hexo.model('Post').get(id)
+        id = utils.base64Decode(id)
+        var post = hexo.model('Post').filter(p => p.permalink === id).data[0];
         post = _.cloneDeep(post)
         if (!post) return res.send(404, "Post not found")
-        var newSource = path.join('_discarded/', post.source.slice('_drafts'.length))
-        update(id, { source: newSource }, function (err, post) {
-            if (err) {
-                return res.send(400, err);
-            }
-            res.done(post)
-        }, hexo)
+
+        const originalFilename = path.basename(post.source)
+        const originalDirname = path.dirname(post.source)
+        const newSource = path.join('_discarded', String(Date.now()), originalDirname, originalFilename)
+        const oldPath = path.join(hexo.source_dir, post.source)
+        const newDir = path.join(hexo.source_dir, path.dirname(newSource))
+        const newPath = path.join(newDir, originalFilename)
+
+        // 使用 fse 确保目录存在
+        fse.ensureDir(newDir, err => {
+            if (err) return res.send(500, `Failed to create directory: ${err.message}`)
+
+            // 使用 fse 移动文件到新路径下
+            fse.move(oldPath, newPath, { overwrite: false }, err => {
+                if (err) return res.send(500, `File operation failed: ${err.message}`)
+                // 从数据模型中删除页面记录
+                hexo.model('Post').remove({ _id: post._id }, err => {
+                    if (err) return res.send(500, `Failed to remove post from model: ${err.message}`)
+
+                    // 刷新 Hexo 数据
+                    hexo.source.process().then(() => {
+                        res.done(addIsDraft(post))
+                    }).catch(e => {
+                        console.error(e, e.stack)
+                        res.send(500, 'Failed to refresh data')
+                    })
+                })
+
+            })
+        })
     }
+
     function loadBlogInfoList() {
         const blogInfoList = fs.readFileSync(path.join(hexo.base_dir, 'blogInfoList.json'));
         return JSON.parse(blogInfoList);
@@ -177,26 +247,39 @@ module.exports = function (app, hexo, use) {
     use('posts/list', function (req, res) {
         const parsedUrl = url.parse(req.url, true);
         const queryParams = parsedUrl.query;
-        const { published } = queryParams
-        var post = hexo.model('Post')
-        var postList = post.toArray()
+        const { published, page = 1, pageSize = 12 } = queryParams;
+
+        var post = hexo.model('Post');
+        var postList = post.toArray();
         var clonedList = _.cloneDeep(postList);
-        clonedList.map(addIsDraft)
-        let finalList = []
+        clonedList.map(addIsDraft);
+
+        let finalList = [];
         if (published == 'true') {
-            finalList = clonedList.filter(post => post.isDraft === false && post.isDiscarded === false)
+            finalList = clonedList.filter(post => post.isDraft === false && post.isDiscarded === false);
         } else {
-            finalList = clonedList.filter(post => post.isDraft === true)
+            finalList = clonedList.filter(post => post.isDraft === true);
         }
+
         var sortedList = finalList.sort(function (a, b) {
             var dateA = new Date(a.date);
             var dateB = new Date(b.date);
-            return dateB - dateA; // 比较日期值而不是整个对象
+            return dateB - dateA;
         });
-        res.done(sortedList.map(post => {
-            const { site, raw, content, more, tags, _content, categories, ...rest } = post; // 使用对象解构来排除不需要的属性
-            return rest; // 返回剩余的属性
-        }));
+
+        // 分页处理
+        const total = sortedList.length;
+        const startIndex = (Math.max(parseInt(page), 1) - 1) * parseInt(pageSize);
+        const endIndex = startIndex + parseInt(pageSize);
+        const paginatedData = sortedList.slice(startIndex, endIndex);
+
+        res.done({
+            total: total,
+            data: paginatedData.map(post => {
+                const { site, raw, content, more, tags, _content, categories, ...rest } = post;
+                return rest;
+            })
+        });
     });
     use('posts/page/list', function (req, res) {
         const parsedUrl = url.parse(req.url, true);
@@ -259,11 +342,22 @@ module.exports = function (app, hexo, use) {
             return remove(parts[parts.length - 2], req.body, res)
         }
 
-        if (id === 'posts' || !id) next()
+        if (id === 'posts' || !id) return next();
         if (req.method === 'GET') {
-            var post = hexo.model('Post').get(id)
-            if (!post) next()
-            post = _.cloneDeep(post)
+            console.log("Posts route: Searching for post with id:", id);
+            id = utils.base64Decode(id)
+            // 使用findOne代替filter+[0]，避免undefined问题
+            let post = hexo.model('Post').filter(post => {
+                const permalink = post.permalink;
+                console.log("Checking slug:", permalink, "Match result:", id === permalink);
+                return id === permalink;
+            });
+            // 如果没找到匹配的文章
+            if (!post) {
+                console.log("Posts route: No post found with slug:", id);
+                return next();
+            }
+            post = _.cloneDeep(post.data[0])
             // console.log(Object.keys(post))
             // console.log(post.tags)
             // console.log(post.categories)
@@ -301,10 +395,22 @@ module.exports = function (app, hexo, use) {
 
         var id = last
         if (req.method === 'GET') {
-            var post = hexo.model('Post').get(id)
+            console.log("Searching for post with id:", id);
+            id = utils.base64Decode(id)
+            // 使用findOne代替filter+[0]，避免undefined问题
+            var post = hexo.model('Post').filter(post => {
+                const permalink = post.permalink;
+                console.log("Checking slug:", permalink, "Match result:", id === permalink);
+                return id === permalink;
+            }).data[0];
+
+            // 如果没找到匹配的文章
             if (!post) {
-                next()
-                return
+                console.log("No post found with slug:", id);
+                // 列出所有可用的slug供调试
+                console.log("Available slugs:", hexo.model('Post').toArray().map(p => p.slug).join(', '));
+                next();
+                return;
             }
             var split = hfm.split(post.raw)
             // console.log('-----> split data', split.data)
