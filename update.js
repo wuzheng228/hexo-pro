@@ -108,7 +108,7 @@ module.exports = function (model, unimark, update, callback, hexo) {
                     const permalink = post.permalink;
                     return unimark === permalink;
                 } else if (model === 'Page') {
-                    const source = base64Decode(unimark)
+                    const source = utils.base64Decode(unimark)
                     return source === post.source;
                 }
             }).data[0]);
