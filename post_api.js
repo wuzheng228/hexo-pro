@@ -73,7 +73,7 @@ module.exports = function (app, hexo, use) {
             if (err) return res.send(500, `Failed to create directory: ${err.message}`);
 
             // 使用 fse 移动文件到新路径下
-            fse.move(oldPath, newPath, { overwrite: false }, err => {
+            fse.move(oldPath, newPath, { overwrite: false }, async err => {
                 if (err) return res.send(500, `File operation failed: ${err.message}`);
 
                 // 更新数据模型中的 post 源路径
@@ -81,9 +81,15 @@ module.exports = function (app, hexo, use) {
                 post = _.cloneDeep(post);
 
                 // 刷新 Hexo 数据
+                await hexo.source.process().then(() => {
+                    res.done(addIsDraft(post))
+                }).catch(e => {
+                    console.error(e, e.stack)
+                    res.send(500, 'Failed to refresh data')
+                })
                 // 直接更新数据库中的source路径
-                hexo.model('Post').update(post._id, { source: newSource });
-                res.done(addIsDraft(post));
+                // hexo.model('Post').update(post._id, { source: newSource });
+                // res.done(addIsDraft(post));
             });
         });
     }
@@ -106,7 +112,7 @@ module.exports = function (app, hexo, use) {
             if (err) return res.send(500, `Failed to create directory: ${err.message}`);
 
             // 使用 fse 移动文件到新路径下
-            fse.move(oldPath, newPath, { overwrite: false }, err => {
+            fse.move(oldPath, newPath, { overwrite: false }, async err => {
                 if (err) return res.send(500, `File operation failed: ${err.message}`);
 
                 // 更新数据模型中的 post 源路径
@@ -114,9 +120,15 @@ module.exports = function (app, hexo, use) {
                 post = _.cloneDeep(post);
 
                 // 刷新 Hexo 数据
-                // 直接更新数据库中的source路径
-                hexo.model('Post').update(post._id, { source: newSource });
-                res.done(addIsDraft(post));
+                await hexo.source.process().then(() => {
+                    res.done(addIsDraft(post))
+                }).catch(e => {
+                    console.error(e, e.stack)
+                    res.send(500, 'Failed to refresh data')
+                })
+                // // 直接更新数据库中的source路径
+                // hexo.model('Post').update(post._id, { source: newSource });
+                // res.done(addIsDraft(post));
             });
         });
     }
@@ -501,64 +513,64 @@ module.exports = function (app, hexo, use) {
     use('settings/list', function (req, res, next) {
         res.done(getSettings())
     })
-    use('images/upload', async function (req, res, next) {
-        if (req.method !== 'POST') return next();
-        if (!req.body) {
-            return res.send(400, 'No post body given');
-        }
-        if (!req.body.data) {
-            return res.send(400, 'No data given');
-        }
+    // use('images/upload', async function (req, res, next) {
+    //     if (req.method !== 'POST') return next();
+    //     if (!req.body) {
+    //         return res.send(400, 'No post body given');
+    //     }
+    //     if (!req.body.data) {
+    //         return res.send(400, 'No data given');
+    //     }
 
-        const imagePath = '/images';
-        let imagePrefix = 'pasted-';
-        if (req.body.filename) {
-            imagePrefix = req.body.filename
-        }
+    //     const imagePath = '/images';
+    //     let imagePrefix = 'pasted-';
+    //     if (req.body.filename) {
+    //         imagePrefix = req.body.filename
+    //     }
 
-        // function generateShortId() {
-        //     const uuid = uuidv4().replace(/-/g, ''); // 生成 UUID 并去除分隔符
-        //     return uuid.substring(0, 10); // 截取前10个字符
-        // }
+    //     // function generateShortId() {
+    //     //     const uuid = uuidv4().replace(/-/g, ''); // 生成 UUID 并去除分隔符
+    //     //     return uuid.substring(0, 10); // 截取前10个字符
+    //     // }
 
-        const msg = 'upload successful';
-        // const shortId = generateShortId(); // 生成短唯一标识符
-        const filename = `${imagePrefix}-${uuidv4()}-${Date.now()}.png`;
+    //     const msg = 'upload successful';
+    //     // const shortId = generateShortId(); // 生成短唯一标识符
+    //     const filename = `${imagePrefix}-${uuidv4()}-${Date.now()}.png`;
 
-        const outpath = path.join(hexo.source_dir, imagePath, filename);
+    //     const outpath = path.join(hexo.source_dir, imagePath, filename);
 
-        // Ensure directory exists
-        if (!fs.existsSync(path.dirname(outpath))) {
-            fs.mkdirsSync(path.dirname(outpath));
-        }
+    //     // Ensure directory exists
+    //     if (!fs.existsSync(path.dirname(outpath))) {
+    //         fs.mkdirsSync(path.dirname(outpath));
+    //     }
 
-        try {
-            // Strip out the data prefix for base64 encoded images
-            const dataURI = req.body.data.replace(/^data:image\/\w+;base64,/, '');
-            const buf = Buffer.from(dataURI, 'base64');
+    //     try {
+    //         // Strip out the data prefix for base64 encoded images
+    //         const dataURI = req.body.data.replace(/^data:image\/\w+;base64,/, '');
+    //         const buf = Buffer.from(dataURI, 'base64');
 
-            console.log(`Saving image to ${outpath}`);
+    //         console.log(`Saving image to ${outpath}`);
 
-            // Asynchronous write with a promise
-            await fs.writeFile(outpath, buf);
+    //         // Asynchronous write with a promise
+    //         await fs.writeFile(outpath, buf);
 
-            const encodedFilename = encodeURIComponent(filename)
-            // Generate the correct src path
-            const imageSrc = `${imagePath}/${encodedFilename}`;
+    //         const encodedFilename = encodeURIComponent(filename)
+    //         // Generate the correct src path
+    //         const imageSrc = `${imagePath}/${encodedFilename}`;
 
 
-            // Process the source to ensure it is correctly added to Hexo's file structure
-            // await hexo.source.process();
-            // throw new Error('hexo.source.process() should have resolved the promise');
-            res.done({
-                src: imageSrc,
-                msg: msg
-            });
-        } catch (error) {
-            hexo.log.e(`Error saving image: ${error.message}`);
-            return res.send(500, 'Failed to save image');
-        }
-    });
+    //         // Process the source to ensure it is correctly added to Hexo's file structure
+    //         // await hexo.source.process();
+    //         // throw new Error('hexo.source.process() should have resolved the promise');
+    //         res.done({
+    //             src: imageSrc,
+    //             msg: msg
+    //         });
+    //     } catch (error) {
+    //         hexo.log.e(`Error saving image: ${error.message}`);
+    //         return res.send(500, 'Failed to save image');
+    //     }
+    // });
 
 
     // 新增接口：更新文章的frontMatter
@@ -583,7 +595,7 @@ module.exports = function (app, hexo, use) {
         frontMatterUpdate[key] = value;
 
         // 使用update函数更新文章
-        update(permalink, { frontMatter: frontMatterUpdate }, function(err, post) {
+        update(permalink, { frontMatter: frontMatterUpdate }, function (err, post) {
             if (err) {
                 return res.send(400, err);
             }

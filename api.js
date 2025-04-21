@@ -2,6 +2,7 @@
 const login_api = require('./login_api');
 const post_api = require('./post_api')
 const page_api = require('./page_api')
+const image_api = require('./image_api') // 添加图片API
 const CircularJSON = require('circular-json');
 module.exports = function (app, hexo, needLogin) {
     var use = function (path, fn) {
@@ -25,4 +26,5 @@ module.exports = function (app, hexo, needLogin) {
     login_api(app, hexo, use, needLogin)
     post_api(app, hexo, use)
     page_api(app, hexo, use)
+    image_api(app, hexo, use) // 注册图片API
 }

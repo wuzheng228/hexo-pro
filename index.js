@@ -6,6 +6,8 @@ var api = require('./api');
 const { expressjwt: jwt } = require('express-jwt')
 const fs = require('fs');
 const mime = require('mime')
+// 添加查询字符串解析中间件
+const querystring = require('querystring');
 
 let needLogin = hexo.config.hexo_pro && hexo.config.hexo_pro.username
 if (needLogin) {
@@ -87,6 +89,15 @@ hexo.extend.filter.register('after_post_render', function (data) {
 
 hexo.extend.filter.register('server_middleware', function (app) {
 
+    // 添加查询字符串解析中间件
+    app.use((req, res, next) => {
+        if (!req.query && req.url.includes('?')) {
+            const queryStr = req.url.split('?')[1];
+            req.query = querystring.parse(queryStr);
+        }
+        next();
+    });
+
     // console.log("posts=>", hexo.locals.get("posts"))
     // 检查请求的URL是否以静态文件后缀结尾
     app.use((req, res, next) => {
@@ -112,7 +123,7 @@ hexo.extend.filter.register('server_middleware', function (app) {
                     res.end(data);
                 }
             });
-            staticMiddleware()
+            // staticMiddleware()
         } else {
             next();
         }
@@ -129,13 +140,12 @@ hexo.extend.filter.register('server_middleware', function (app) {
     const unlessPaths = [hexo.config.root + 'hexopro/api/login', hexo.config.root + 'pro']
     console.log(unlessPaths)
 
-    if (needLogin) {
-        app.use(hexo.config.root + 'hexopro/api/', jwt({ secret: hexo.config.hexo_pro.secret, algorithms: ["HS256"] }).unless({ path:  unlessPaths}))
-    }
-
-
     app.use('/hexopro/api', bodyParser.json({ limit: '50mb' }));
+    app.use('/hexopro/api', bodyParser.urlencoded({ extended: true }));
 
+    if (needLogin) {
+        app.use(hexo.config.root + 'hexopro/api/', jwt({ secret: hexo.config.hexo_pro.secret, algorithms: ["HS256"] }).unless({ path: unlessPaths }))
+    }
 
     // setup the json api endpoints
     api(app, hexo, needLogin);
