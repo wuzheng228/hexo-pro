@@ -86,18 +86,21 @@ module.exports = function (app, hexo, use) {
         }
 
         // 生成唯一文件名
-        const uniqueSlug = `${req.body.title.replace(/\s+/g, '-')}`;
-        const filePath = path.join(hexo.source_dir, `${req.body.title}/index.md`);
+        let title = req.body.title;
+        let filePath = path.join(hexo.source_dir, `${title}/index.md`);
 
         // 检查文件是否存在
-        const exists = fse.pathExistsSync(filePath)
+        const exists = fse.pathExistsSync(filePath);
         if (exists) {
-            return res.send(400, 'File already exists');
+            // 如果存在，自动添加时间戳后缀
+            title = `${title} (${Date.now()})`;
+            filePath = path.join(hexo.source_dir, `${title}/index.md`);
+            // 不返回错误，而是继续创建带有新标题的页面
         }
 
         // 生成页面的元数据
         const frontMatter = {
-            title: req.body.title,
+            title: title,
             layout: 'page',
             date: new Date(),
             updated: new Date(),
@@ -115,8 +118,6 @@ module.exports = function (app, hexo, use) {
                 console.error(err);
                 return res.send(500, 'Failed to create page');
             }
-
-
         });
 
         // 通知 Hexo 重新处理数据源
@@ -128,9 +129,33 @@ module.exports = function (app, hexo, use) {
         });
 
         var page = hexo.model('Page').findOne({ source: filePath.slice(hexo.source_dir.length).replace(/\\/g, '/') });
+        
+        // 如果存在重名情况，在返回结果中添加提示信息
+        if (exists) {
+            page.titleChanged = true; // 添加标志，前端可以据此显示提示
+            page.originalTitle = req.body.title; // 保存原始标题
+        }
+        
         return res.done(addFormatDateTime(page));
-
     }
+
+    // 检查页面是否存在
+    use('pages/check-exists', function (req, res, next) {
+        if (req.method !== 'GET') return next();
+        
+        const parsedUrl = url.parse(req.url, true);
+        const queryParams = parsedUrl.query;
+        const { path: pagePath } = queryParams;  // 将参数名改为 pagePath
+        
+        if (!pagePath) {
+            return res.send(400, 'No path provided');
+        }
+        
+        const filePath = path.join(hexo.source_dir, pagePath);
+        const exists = fse.pathExistsSync(filePath);
+        
+        return res.done({ exists });
+    });
 
     use('pages/list', function (req, res) {
         const parsedUrl = url.parse(req.url, true);
@@ -199,7 +224,27 @@ module.exports = function (app, hexo, use) {
             return res.send(400, 'No page body given');
         }
 
-        update(id, req.body, function (err, page) {
+        id = req.body._id
+
+        update(id, req.body.update, function (err, page) {
+            if (err) {
+                return res.send(400, err);
+            }
+            res.done({
+                page: addIsDraft(page)
+            })
+        }, hexo);
+    });
+
+    use('page/update', function (req, res, next) {
+
+        if (!req.body) {
+            return res.send(400, 'No page body given');
+        }
+
+        id = req.body._id
+
+        update(id, req.body.update, function (err, page) {
             if (err) {
                 return res.send(400, err);
             }

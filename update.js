@@ -30,7 +30,7 @@ module.exports = function (model, unimark, update, callback, hexo) {
         return str.substring(0, str.length - path.extname(str).length);
     }
     var post = hexo.model(model).filter(post => {
-        
+
         return unimark === post.permalink;
     }).data[0];
     if (!post) {
@@ -104,13 +104,8 @@ module.exports = function (model, unimark, update, callback, hexo) {
         await hexo.source.process().then(function () {
             //      console.log(post.full_source, post.source)
             callback(null, hexo.model(model).filter(post => {
-                if (model === 'Post') {
-                    const permalink = post.permalink;
-                    return unimark === permalink;
-                } else if (model === 'Page') {
-                    const source = utils.base64Decode(unimark)
-                    return source === post.source;
-                }
+                const permalink = post.permalink;
+                return unimark === permalink;
             }).data[0]);
         });
     }).catch(err => {

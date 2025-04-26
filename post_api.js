@@ -307,6 +307,22 @@ module.exports = function (app, hexo, use) {
         })
         res.done({ code: 0, data: enhancedResults })
     });
+
+    use('posts/check-title', function (req, res) {
+        const { title, excludeId } = req.query
+
+        // 查找除了指定 ID 外的所有文章
+        const posts = hexo.model('Post').filter(p => {
+            if (excludeId) {
+                const decodedId = utils.base64Decode(excludeId)
+                return p.title === title && p.permalink !== decodedId
+            }
+            return p.title === title
+        }).data
+
+        res.done({ exists: posts.length > 0 })
+    })
+
     use('posts/list', function (req, res) {
         const parsedUrl = url.parse(req.url, true);
         const queryParams = parsedUrl.query;
@@ -407,8 +423,8 @@ module.exports = function (app, hexo, use) {
 
         if (id === 'posts' || !id) return next();
         if (req.method === 'GET') {
-            console.log("Posts route: Searching for post with id:", id);
             id = utils.base64Decode(id)
+            console.log("Posts route: Searching for post with id:", id);
             // 使用findOne代替filter+[0]，避免undefined问题
             let post = hexo.model('Post').filter(post => {
                 const permalink = post.permalink;
@@ -604,4 +620,7 @@ module.exports = function (app, hexo, use) {
         }, hexo);
     });
 
+
+
 }
+

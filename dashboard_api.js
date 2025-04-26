@@ -2,6 +2,7 @@ const path = require('path')
 const fs = require('hexo-fs')
 const fse = require('fs-extra');
 const _ = require('lodash')
+const axios = require('axios'); // 需要安装axios
 
 module.exports = function (app, hexo, use) {
     // 获取文章统计数据
@@ -110,6 +111,9 @@ module.exports = function (app, hexo, use) {
 
             // 获取当前主题
             const theme = hexo.config.theme || 'Unknown'
+            
+            // 获取作者信息
+            const author = hexo.config.author || ''
 
             // 获取插件列表
             const plugins = []
@@ -161,7 +165,8 @@ module.exports = function (app, hexo, use) {
                 hexoVersion: hexoVersion,
                 theme: theme,
                 plugins: plugins,
-                lastDeployTime: lastDeployTime
+                lastDeployTime: lastDeployTime,
+                author: author
             })
         } catch (error) {
             console.error('获取系统信息失败:', error)
@@ -243,4 +248,74 @@ module.exports = function (app, hexo, use) {
 
         return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`
     }
+
+    // 获取网站访问统计数据
+    use('dashboard/visit/stats', async function (req, res) {
+        try {
+            // 获取主题配置
+            const themeConfig = hexo.theme.config || {};
+            const siteUrl = hexo.config.url || '';
+            
+            // 检查是否启用了busuanzi统计
+            const busuanziEnabled = themeConfig.busuanzi && themeConfig.busuanzi.enable;
+            
+            if (busuanziEnabled) {
+                try {
+                    // 尝试从博客首页获取busuanzi统计数据
+                    const response = await axios.get(siteUrl, { timeout: 5000 });
+                    const html = response.data;
+                    
+                    // 解析HTML获取统计数据
+                    const siteUvMatch = html.match(/id="busuanzi_value_site_uv">(\d+)<\/span>/);
+                    const sitePvMatch = html.match(/id="busuanzi_value_site_pv">(\d+)<\/span>/);
+                    
+                    const siteUv = siteUvMatch ? parseInt(siteUvMatch[1]) : 0;
+                    const sitePv = sitePvMatch ? parseInt(sitePvMatch[1]) : 0;
+                    
+                    // 获取历史访问数据（如果有存储的话）
+                    const visitStatsPath = path.join(hexo.base_dir, 'visit_stats.json');
+                    let visitHistory = [];
+                    
+                    if (fs.existsSync(visitStatsPath)) {
+                        try {
+                            visitHistory = JSON.parse(fse.readFileSync(visitStatsPath));
+                        } catch (e) {
+                            console.error('解析访问统计历史数据失败:', e);
+                        }
+                    }
+                    
+                    // 返回数据
+                    res.done({
+                        success: true,
+                        busuanziEnabled: true,
+                        currentStats: {
+                            siteUv: siteUv,
+                            sitePv: sitePv
+                        },
+                        visitHistory: visitHistory
+                    });
+                } catch (error) {
+                    // 如果获取失败，返回错误信息
+                    console.error('获取busuanzi统计数据失败:', error);
+                    res.done({
+                        success: false,
+                        busuanziEnabled: true,
+                        error: '获取统计数据失败',
+                        visitHistory: []
+                    });
+                }
+            } else {
+                // 如果未启用busuanzi，返回相应信息
+                res.done({
+                    success: false,
+                    busuanziEnabled: false,
+                    message: '未启用busuanzi统计',
+                    visitHistory: []
+                });
+            }
+        } catch (error) {
+            console.error('获取访问统计失败:', error);
+            res.send(500, '获取访问统计失败');
+        }
+    });
 }
