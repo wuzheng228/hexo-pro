@@ -3,6 +3,9 @@ const login_api = require('./login_api');
 const post_api = require('./post_api')
 const page_api = require('./page_api')
 const image_api = require('./image_api') // 添加图片API
+const yaml_api = require('./yaml_api');
+const dashboard_api = require('./dashboard_api'); // 添加仪表盘API
+const deploy_api = require('./deploy_api'); // 添加部署API
 const CircularJSON = require('circular-json');
 module.exports = function (app, hexo, needLogin) {
     var use = function (path, fn) {
@@ -27,4 +30,7 @@ module.exports = function (app, hexo, needLogin) {
     post_api(app, hexo, use)
     page_api(app, hexo, use)
     image_api(app, hexo, use) // 注册图片API
+    yaml_api(app, hexo, use)
+    dashboard_api(app, hexo, use) // 注册仪表盘API
+    deploy_api(app, hexo, use) // 注册部署API
 }
