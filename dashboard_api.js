@@ -53,7 +53,7 @@ module.exports = function (app, hexo, use) {
                 tags.push({
                     name: tag.name,
                     count: tag.posts.length,
-                    path: tag.path
+                    path: hexo.config.url + '/' + tag.path
                 })
             })
 
@@ -111,7 +111,7 @@ module.exports = function (app, hexo, use) {
 
             // 获取当前主题
             const theme = hexo.config.theme || 'Unknown'
-            
+
             // 获取作者信息
             const author = hexo.config.author || ''
 
@@ -255,27 +255,27 @@ module.exports = function (app, hexo, use) {
             // 获取主题配置
             const themeConfig = hexo.theme.config || {};
             const siteUrl = hexo.config.url || '';
-            
+
             // 检查是否启用了busuanzi统计
-            const busuanziEnabled = themeConfig.busuanzi && themeConfig.busuanzi.enable;
-            
+            const busuanziEnabled = themeConfig.busuanzi
+
             if (busuanziEnabled) {
                 try {
                     // 尝试从博客首页获取busuanzi统计数据
                     const response = await axios.get(siteUrl, { timeout: 5000 });
                     const html = response.data;
-                    
+
                     // 解析HTML获取统计数据
                     const siteUvMatch = html.match(/id="busuanzi_value_site_uv">(\d+)<\/span>/);
                     const sitePvMatch = html.match(/id="busuanzi_value_site_pv">(\d+)<\/span>/);
-                    
+
                     const siteUv = siteUvMatch ? parseInt(siteUvMatch[1]) : 0;
                     const sitePv = sitePvMatch ? parseInt(sitePvMatch[1]) : 0;
-                    
+
                     // 获取历史访问数据（如果有存储的话）
                     const visitStatsPath = path.join(hexo.base_dir, 'visit_stats.json');
                     let visitHistory = [];
-                    
+
                     if (fs.existsSync(visitStatsPath)) {
                         try {
                             visitHistory = JSON.parse(fse.readFileSync(visitStatsPath));
@@ -283,7 +283,7 @@ module.exports = function (app, hexo, use) {
                             console.error('解析访问统计历史数据失败:', e);
                         }
                     }
-                    
+
                     // 返回数据
                     res.done({
                         success: true,
@@ -316,6 +316,42 @@ module.exports = function (app, hexo, use) {
         } catch (error) {
             console.error('获取访问统计失败:', error);
             res.send(500, '获取访问统计失败');
+        }
+    });
+
+    // 获取最近6个月的文章发布统计
+    use('dashboard/posts/monthly-stats', function (req, res) {
+        try {
+            const posts = hexo.model('Post').toArray();
+            const publishedPosts = posts.filter(post => !(post.source && post.source.indexOf('_draft') === 0));
+            
+            // 获取最近6个月的日期范围
+            const today = new Date();
+            const months = [];
+            for (let i = 5; i >= 0; i--) {
+                const month = new Date(today.getFullYear(), today.getMonth() - i, 1);
+                const monthStr = `${month.getFullYear()}-${String(month.getMonth() + 1).padStart(2, '0')}`;
+                months.push(monthStr);
+            }
+            
+            // 统计每月发布的文章数量
+            const monthlyStats = months.map(month => {
+                const count = publishedPosts.filter(post => {
+                    const postDate = new Date(post.date);
+                    const postMonth = `${postDate.getFullYear()}-${String(postDate.getMonth() + 1).padStart(2, '0')}`;
+                    return postMonth === month;
+                }).length;
+                
+                return {
+                    month: month,
+                    count: count
+                };
+            });
+            
+            res.done(monthlyStats);
+        } catch (error) {
+            console.error('获取月度文章统计失败:', error);
+            res.send(500, '获取月度文章统计失败');
         }
     });
 }
