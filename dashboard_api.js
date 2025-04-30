@@ -235,6 +235,93 @@ module.exports = function (app, hexo, use) {
         }
     })
 
+    // 切换待办事项完成状态
+    use('dashboard/todos/toggle/:id', function (req, res, next) {
+        if (req.method !== 'PUT') {
+            console.log('[TODO TOGGLE] Method not PUT, calling next()'); // 添加日志
+            return next();
+        }
+    
+        try {
+            const todoId = req.params.id;
+            if (!todoId) {
+                console.log('[TODO TOGGLE] Missing todoId'); // 添加日志
+                return res.send(400, '缺少待办事项 ID');
+            }
+    
+            const todosPath = path.join(hexo.base_dir, 'todos.json');
+            let todos = [];
+    
+            if (fs.existsSync(todosPath)) {
+                try {
+                    todos = JSON.parse(fse.readFileSync(todosPath));
+                } catch (e) {
+                    console.error('解析待办事项文件失败:', e);
+                    return res.send(500, '处理待办事项文件失败');
+                }
+            } else {
+                 console.log(`[TODO TOGGLE] todos.json not found at: ${todosPath}`); // 添加日志
+            }
+    
+            const todoIndex = todos.findIndex(todo => todo.id === todoId);
+    
+            if (todoIndex === -1) {
+                return res.send(404, '未找到待办事项');
+            }
+    
+            // 切换完成状态
+            todos[todoIndex].completed = !todos[todoIndex].completed;
+    
+            // 保存到文件
+            fs.writeFileSync(todosPath, JSON.stringify(todos, null, 2));
+    
+            res.done(todos[todoIndex]); // 返回更新后的待办事项
+        } catch (error) {
+            console.error('切换待办事项状态失败:', error);
+            res.send(500, '切换待办事项状态失败');
+        }
+    });
+
+    // 删除待办事项
+    use('dashboard/todos/delete/:id', function (req, res, next) {
+        if (req.method !== 'DELETE') return next() // 使用 DELETE 方法
+
+        try {
+            const todoId = req.params.id
+            if (!todoId) {
+                return res.send(400, '缺少待办事项 ID')
+            }
+
+            const todosPath = path.join(hexo.base_dir, 'todos.json')
+            let todos = []
+
+            if (fs.existsSync(todosPath)) {
+                try {
+                    todos = JSON.parse(fse.readFileSync(todosPath))
+                } catch (e) {
+                    console.error('解析待办事项文件失败:', e)
+                    return res.send(500, '处理待办事项文件失败')
+                }
+            }
+
+            const initialLength = todos.length
+            todos = todos.filter(todo => todo.id !== todoId)
+
+            if (todos.length === initialLength) {
+                return res.send(404, '未找到待办事项')
+            }
+
+            // 保存到文件
+            fs.writeFileSync(todosPath, JSON.stringify(todos, null, 2))
+
+            res.done({ success: true, message: '删除成功' })
+        } catch (error) {
+            console.error('删除待办事项失败:', error)
+            res.send(500, '删除待办事项失败')
+        }
+    })
+
+
     // 辅助函数：格式化日期时间
     function formatDateTime(dateString) {
         const date = new Date(dateString)
