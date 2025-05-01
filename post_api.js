@@ -400,27 +400,20 @@ module.exports = function (app, hexo, use) {
             });
     })
     // 查询单个博客信息
-    use('posts', function (req, res, next) {
-        var url = req.url
-        if (url[url.length - 1] === '/') {
-            url = url.slice(0, -1)
-        }
-        var parts = url.split('/')
-        var last = parts[parts.length - 1]
-
-        var id = last
+    use('posts/:param1/:param2', function (req, res, next) {
+        var last = req.param2
         if (last === 'publish') {
             // console.log(parts)
             // console.log(typeof parts[parts.length - 2])
-            return publish(parts[parts.length - 2], req.body, res)
+            return publish(req.param1, req.body, res)
         }
         if (last === 'unpublish') {
-            return unpublish(parts[parts.length - 2], req.body, res)
+            return unpublish(req.param1, req.body, res)
         }
         if (last === 'remove') {
-            return remove(parts[parts.length - 2], req.body, res)
+            return remove(req.param1, req.body, res)
         }
-
+        var id = req.param2
         if (id === 'posts' || !id) return next();
         if (req.method === 'GET') {
             id = utils.base64Decode(id)
@@ -448,6 +441,40 @@ module.exports = function (app, hexo, use) {
             return res.done(addIsDraft(post))
         }
 
+    })
+
+    use('posts/:param1', function (req, res, next) {
+        var id = req.params.param1
+        if (id === 'posts' || !id) return next();
+        if (req.method === 'GET') {
+            id = utils.base64Decode(id)
+            console.log("Posts route: Searching for post with id:", id);
+            // 使用findOne代替filter+[0]，避免undefined问题
+            let post = hexo.model('Post').filter(post => {
+                const permalink = post.permalink;
+                console.log("Checking slug:", permalink, "Match result:", id === permalink);
+                return id === permalink;
+            });
+            // 如果没找到匹配的文章
+            if (!post) {
+                console.log("Posts route: No post found with slug:", id);
+                return next();
+            }
+            post = _.cloneDeep(post.data[0])
+            // console.log(Object.keys(post))
+            // console.log(post.tags)
+            // console.log(post.categories)
+            // console.log(post.top_img)
+            // var split = hfm.split(post.raw)
+            // // console.log('-----> split data', split.data)
+            // var parsed = hfm.parse([split.data, '---'].join('\n'))
+            // console.log('-----> split parsed', parsed)
+            return res.done(addIsDraft(post))
+        }
+
+    })
+
+    use('post/update', function(req, res, next) {
         if (!req.body) {
             return res.send(400, 'No post body given')
         }
@@ -464,15 +491,8 @@ module.exports = function (app, hexo, use) {
         }, hexo)
     })
 
-    use('postMeta', function (req, res, next) {
-        var url = req.url
-        if (url[url.length - 1] === '/') {
-            url = url.slice(0, -1)
-        }
-        var parts = url.split('/')
-        var last = parts[parts.length - 1]
-
-        var id = last
+    use('postMeta/:id', function (req, res, next) {
+        var id = req.params.id
         if (req.method === 'GET') {
             console.log("Searching for post with id:", id);
             id = utils.base64Decode(id)

@@ -196,7 +196,7 @@ module.exports = function (app, hexo, use) {
         createPageManually(req, res);
     });
 
-    use('pages/', function (req, res, next) {
+    use('pages/:id', function (req, res, next) {
         var url = req.url
         if (url[url.length - 1] === '/') {
             url = url.slice(0, -1)
@@ -254,15 +254,8 @@ module.exports = function (app, hexo, use) {
         }, hexo);
     });
 
-    use('pageMeta', function (req, res, next) {
-        var url = req.url
-        if (url[url.length - 1] === '/') {
-            url = url.slice(0, -1)
-        }
-        var parts = url.split('/')
-        var last = parts[parts.length - 1]
-
-        var id = last
+    use('pageMeta/:id', function (req, res, next) {
+        var id = req.params.id
         if (req.method === 'GET') {
             id = utils.base64Decode(id)
             var post = hexo.model('Page').filter(p => p.permalink === id).data[0]

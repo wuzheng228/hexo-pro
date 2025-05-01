@@ -8,14 +8,10 @@ const fs = require('fs');
 const mime = require('mime')
 // 添加查询字符串解析中间件
 const querystring = require('querystring');
+const crypto = require('crypto');
 
-let needLogin = hexo.config.hexo_pro && hexo.config.hexo_pro.username
-if (needLogin) {
-    if (!hexo.config.hexo_pro.password) {
-        console.error('[Hexo pro]: config admin.password is requred for authentication');
-        needLogin = false;
-    }
-}
+// 修改：不再从 _config.yml 获取登录信息，而是在 api 中根据数据库判断
+let needLogin = false; // 默认不需要登录，将在 api.js 中根据数据库内容决定
 
 function staticMiddleware(rootDir) {
     return function (req, res, next) {
@@ -137,18 +133,43 @@ hexo.extend.filter.register('server_middleware', function (app) {
         root = ''
     }
 
-    const unlessPaths = [hexo.config.root + 'hexopro/api/login', hexo.config.root + 'pro']
+    const unlessPaths = [
+        hexo.config.root + 'hexopro/api/login', 
+        hexo.config.root + 'hexopro/api/settings/check-first-use',
+        hexo.config.root + 'hexopro/api/settings/register',
+        hexo.config.root + 'pro'
+    ]
     console.log(unlessPaths)
 
     app.use('/hexopro/api', bodyParser.json({ limit: '50mb' }));
     app.use('/hexopro/api', bodyParser.urlencoded({ extended: true }));
 
-    if (needLogin) {
-        app.use(hexo.config.root + 'hexopro/api/', jwt({ secret: hexo.config.hexo_pro.secret, algorithms: ["HS256"] }).unless({ path: unlessPaths }))
+    // 初始化数据库并获取 API
+    const apiInstance = api(app, hexo, needLogin);
+    
+    // 从 API 获取实际的 needLogin 状态和 secret
+    needLogin = global.actualNeedLogin;
+    // 使用全局变量 global.jwtSecret，如果为空则生成新的
+    if (!global.jwtSecret) {
+        global.jwtSecret = crypto.randomBytes(64).toString('hex');
     }
 
-    // setup the json api endpoints
-    api(app, hexo, needLogin);
+    // 确保 JWT 中间件使用正确的 secret
+    if (global.actualNeedLogin) {
+        console.log('启用JWT验证，secret:', global.jwtSecret ? '已设置' : '未设置');
+        console.log('排除的路径:', unlessPaths);
+        
+        // 使用更简单的路径匹配方式
+        app.use('/hexopro/api', jwt({
+            secret: global.jwtSecret,
+            algorithms: ["HS256"],
+            requestProperty: 'auth' // 确保将解码后的token信息存储在req.auth中
+        }).unless({ path: [
+            '/hexopro/api/login',
+            '/hexopro/api/settings/check-first-use',
+            '/hexopro/api/settings/register'
+        ]}));
+    }
 
     app.use((err, req, res, next) => {
         if (err.name === 'UnauthorizedError') {
@@ -161,9 +182,4 @@ hexo.extend.filter.register('server_middleware', function (app) {
             res.end(JSON.stringify({ code: 500, msg: 'unknown err:' + err }))
         }
     })
-
-
 });
-
-
-
