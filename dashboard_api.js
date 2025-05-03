@@ -69,7 +69,7 @@ module.exports = function (app, hexo, use) {
     // 获取最近文章
     use('dashboard/posts/recent', function (req, res) {
         try {
-            const parsedUrl = new URL(req.url, 'http://localhost')
+            const parsedUrl = new URL(req.url, hexo.config.url)
             const limit = parseInt(parsedUrl.searchParams.get('limit')) || 5
 
             const posts = hexo.model('Post').toArray()
@@ -352,12 +352,33 @@ module.exports = function (app, hexo, use) {
                     const response = await axios.get(siteUrl, { timeout: 5000 });
                     const html = response.data;
 
-                    // 解析HTML获取统计数据
-                    const siteUvMatch = html.match(/id="busuanzi_value_site_uv">(\d+)<\/span>/);
-                    const sitePvMatch = html.match(/id="busuanzi_value_site_pv">(\d+)<\/span>/);
+                    // 修改正则表达式以匹配新的HTML结构
+                    const siteUvMatch = html.match(/id="busuanzi_value_site_uv"[^>]*>([\d,]+)/);
+                    const sitePvMatch = html.match(/id="busuanzi_value_site_pv"[^>]*>([\d,]+)/);
 
-                    const siteUv = siteUvMatch ? parseInt(siteUvMatch[1]) : 0;
-                    const sitePv = sitePvMatch ? parseInt(sitePvMatch[1]) : 0;
+                    // 如果匹配失败，尝试使用备用正则表达式
+                    let siteUv = 0;
+                    let sitePv = 0;
+                    
+                    if (siteUvMatch && siteUvMatch[1]) {
+                        siteUv = parseInt(siteUvMatch[1].replace(/,/g, ''));
+                    } else {
+                        // 备用正则表达式
+                        const altUvMatch = html.match(/id="busuanzi_value_site_uv"[^>]*>([^<]+)/);
+                        if (altUvMatch && altUvMatch[1] && !isNaN(parseInt(altUvMatch[1].replace(/,/g, '')))) {
+                            siteUv = parseInt(altUvMatch[1].replace(/,/g, ''));
+                        }
+                    }
+                    
+                    if (sitePvMatch && sitePvMatch[1]) {
+                        sitePv = parseInt(sitePvMatch[1].replace(/,/g, ''));
+                    } else {
+                        // 备用正则表达式
+                        const altPvMatch = html.match(/id="busuanzi_value_site_pv"[^>]*>([^<]+)/);
+                        if (altPvMatch && altPvMatch[1] && !isNaN(parseInt(altPvMatch[1].replace(/,/g, '')))) {
+                            sitePv = parseInt(altPvMatch[1].replace(/,/g, ''));
+                        }
+                    }
 
                     // 获取历史访问数据（如果有存储的话）
                     const visitStatsPath = path.join(hexo.base_dir, 'visit_stats.json');
@@ -441,4 +462,26 @@ module.exports = function (app, hexo, use) {
             res.send(500, '获取月度文章统计失败');
         }
     });
+
+    // 获取最近一月新增文章数
+    use('dashboard/posts/monthly-new', function (req, res) {
+        try {
+            const posts = hexo.model('Post').toArray()
+            const now = new Date()
+            const oneMonthAgo = new Date(now.getFullYear(), now.getMonth() - 1, now.getDate())
+            
+            // 计算最近一个月内新增的文章数量
+            const newPostsCount = posts.filter(post => {
+                const postDate = new Date(post.date)
+                return postDate >= oneMonthAgo && postDate <= now
+            }).length
+    
+            res.done({
+                count: newPostsCount
+            })
+        } catch (error) {
+            console.error('获取最近一月新增文章数失败:', error)
+            res.send(500, '获取最近一月新增文章数失败')
+        }
+    })
 }
