@@ -5,6 +5,24 @@ const { v4: uuidv4 } = require('uuid');
 const utils = require('./utils');
 
 module.exports = function (app, hexo, use) {
+     // 配置multer存储
+     const storage = multer.diskStorage({
+        destination: function (req, file, cb) {
+            // 确保图片目录存在
+            const imagesDir = path.join(hexo.source_dir, 'images');
+            fs.ensureDirSync(imagesDir);
+            cb(null, imagesDir);
+        },
+        filename: function (req, file, cb) {
+            // 生成唯一文件名
+            const uniqueName = `${uuidv4()}${path.extname(file.originalname)}`;
+            cb(null, uniqueName);
+        }
+    });
+    
+    // 创建multer上传实例
+    const upload = multer({ storage: storage });
+
     // 获取图片列表
     use('images/list', function (req, res) {
         const page = parseInt(req.query.page) || 1;
@@ -118,82 +136,146 @@ module.exports = function (app, hexo, use) {
         }
     });
     
-    // 上传图片
-    use('images/upload', function (req, res) {
-        const data = req.body.data;
-        let filename = req.body.filename || '';
-        const folder = req.body.folder || '';
-        
-        if (!data) {
-            return res.send(400, '图片数据不能为空');
-        }
-        
-        // 处理Base64图片数据
-        const matches = data.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
-        if (!matches || matches.length !== 3) {
-            return res.send(400, '无效的图片数据');
-        }
-        
-        const type = matches[1];
-        const imageBuffer = Buffer.from(matches[2], 'base64');
-        
-        // 如果没有提供文件名，生成一个唯一的文件名
-        if (!filename) {
-            // 修复SVG+XML扩展名问题
-            let extension = type.split('/')[1];
-            // 特殊处理SVG+XML类型
-            if (extension === 'svg+xml') {
-                extension = 'svg';
-            }
-            filename = `${uuidv4()}.${extension}`;
-        } else {
-            // 确保文件名有正确的扩展名
-            let extension = type.split('/')[1];
-            // 特殊处理SVG+XML类型
-            if (extension === 'svg+xml') {
-                extension = 'svg';
-            }
-            if (!filename.endsWith(`.${extension}`)) {
-                filename = `${filename}.${extension}`;
-            }
-        }
-        
-        // 确定保存路径
-        const targetDir = folder 
-            ? path.join(hexo.source_dir, 'images', folder) 
-            : path.join(hexo.source_dir, 'images');
-        
-        // 确保目录存在
-        fs.ensureDirSync(targetDir);
-        
-        const filePath = path.join(targetDir, filename);
-        
-        // 检查文件是否已存在
-        if (fs.existsSync(filePath)) {
-            // 如果文件已存在，添加时间戳
-            const nameWithoutExt = filename.substring(0, filename.lastIndexOf('.'));
-            const extension = filename.substring(filename.lastIndexOf('.'));
-            filename = `${nameWithoutExt}_${Date.now()}${extension}`;
-        }
-        
-        const finalFilePath = path.join(targetDir, filename);
-        
-        try {
-            fs.writeFileSync(finalFilePath, imageBuffer);
-            
-            // 返回图片URL
-            const relativePath = folder 
-                ? `images/${folder}/${filename}` 
-                : `images/${filename}`;
+    // 上传图片 - 修改为支持表单数据上传
+    use('images/upload', function (req, res, next) {
+        // 检查是否为表单数据上传
+        if (req.headers['content-type'] && req.headers['content-type'].includes('multipart/form-data')) {
+            // 使用multer处理单个文件上传
+            upload.single('data')(req, res, function (err) {
+                if (err) {
+                    console.error('文件上传失败:', err);
+                    return res.send(500, '文件上传失败: ' + err.message);
+                }
                 
-            res.done({
-                url: `/${relativePath}`,
-                path: relativePath,
-                name: filename
+                if (!req.file) {
+                    return res.send(400, '没有上传文件');
+                }
+                
+                try {
+                    // 获取文件信息
+                    const file = req.file;
+                    const folder = req.body.folder || '';
+                    let filename = req.body.filename || path.basename(file.filename);
+                    
+                    // 确定保存路径
+                    const sourceImagesDir = path.join(hexo.source_dir, 'images');
+                    const targetDir = folder 
+                        ? path.join(sourceImagesDir, folder) 
+                        : sourceImagesDir;
+                    
+                    // 确保目录存在
+                    fs.ensureDirSync(targetDir);
+                    
+                    // 如果文件已经在临时目录，移动到目标目录
+                    const finalFilePath = path.join(targetDir, filename);
+                    
+                    // 检查文件是否已存在
+                    if (fs.existsSync(finalFilePath)) {
+                        // 如果文件已存在，添加时间戳
+                        const nameWithoutExt = filename.substring(0, filename.lastIndexOf('.'));
+                        const extension = filename.substring(filename.lastIndexOf('.'));
+                        filename = `${nameWithoutExt}_${Date.now()}${extension}`;
+                    }
+                    
+                    // 移动文件到最终位置
+                    fs.moveSync(file.path, path.join(targetDir, filename), { overwrite: false });
+                    
+                    // 返回图片URL
+                    const relativePath = folder 
+                        ? `images/${folder}/${filename}` 
+                        : `images/${filename}`;
+                    
+                    res.done({
+                        code: 0,
+                        url: `/${relativePath}`,
+                        path: relativePath,
+                        name: filename,
+                        src: `/${relativePath}` // 添加src字段以兼容现有代码
+                    });
+                } catch (err) {
+                    console.error('保存图片失败:', err);
+                    res.send(500, '保存图片失败: ' + err.message);
+                }
             });
-        } catch (err) {
-            console.error('保存图片失败:', err);
-            res.send(500, '保存图片失败: ' + err.message);
+        } else {
+            // 处理Base64上传方式
+            const data = req.body.data;
+            let filename = req.body.filename || '';
+            const folder = req.body.folder || '';
+            
+            if (!data) {
+                return res.send(400, '图片数据不能为空');
+            }
+            
+            // 处理Base64图片数据
+            const matches = data.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+            if (!matches || matches.length !== 3) {
+                return res.send(400, '无效的图片数据');
+            }
+            
+            const type = matches[1];
+            const imageBuffer = Buffer.from(matches[2], 'base64');
+            
+            // 如果没有提供文件名，生成一个唯一的文件名
+            if (!filename) {
+                // 修复SVG+XML扩展名问题
+                let extension = type.split('/')[1];
+                // 特殊处理SVG+XML类型
+                if (extension === 'svg+xml') {
+                    extension = 'svg';
+                }
+                filename = `${uuidv4()}.${extension}`;
+            } else {
+                // 确保文件名有正确的扩展名
+                let extension = type.split('/')[1];
+                // 特殊处理SVG+XML类型
+                if (extension === 'svg+xml') {
+                    extension = 'svg';
+                }
+                if (!filename.endsWith(`.${extension}`)) {
+                    filename = `${filename}.${extension}`;
+                }
+            }
+            
+            // 确定保存路径
+            const targetDir = folder 
+                ? path.join(hexo.source_dir, 'images', folder) 
+                : path.join(hexo.source_dir, 'images');
+            
+            // 确保目录存在
+            fs.ensureDirSync(targetDir);
+            
+            const filePath = path.join(targetDir, filename);
+            
+            // 检查文件是否已存在
+            if (fs.existsSync(filePath)) {
+                // 如果文件已存在，添加时间戳
+                const nameWithoutExt = filename.substring(0, filename.lastIndexOf('.'));
+                const extension = filename.substring(filename.lastIndexOf('.'));
+                filename = `${nameWithoutExt}_${Date.now()}${extension}`;
+            }
+            
+            const finalFilePath = path.join(targetDir, filename);
+            
+            try {
+                fs.writeFileSync(finalFilePath, imageBuffer);
+                
+                // 返回图片URL
+                const relativePath = folder 
+                    ? `images/${folder}/${filename}` 
+                    : `images/${filename}`;
+                    
+                res.done({
+                    code: 0,
+                    url: `/${relativePath}`,
+                    path: relativePath,
+                    name: filename,
+                    src: `/${relativePath}` // 添加src字段以兼容现有代码
+                });
+            } catch (err) {
+                console.error('保存图片失败:', err);
+                res.send(500, '保存图片失败: ' + err.message);
+            }
         }
     });
     

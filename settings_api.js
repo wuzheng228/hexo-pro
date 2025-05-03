@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const yaml = require('js-yaml');
+const jwt = require('jsonwebtoken');
 
 module.exports = function(app, hexo, use, db) {
   const { userDb, settingsDb } = db;
@@ -118,7 +119,32 @@ module.exports = function(app, hexo, use, db) {
   // 获取当前用户设置
   use('settings', function(req, res) {
     // 修改这里：使用 req.auth
-    const username = req.auth ? req.auth.username : null;
+    let username = req.auth ? req.auth.username : null;
+  
+     // 首先尝试从req.auth获取用户名
+    if (req.auth && req.auth.username) {
+        username = req.auth.username;
+        console.log('从req.auth获取到用户名:', username);
+    } 
+    // 如果req.auth不存在，尝试手动解析token
+    else if (req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
+        try {
+            const token = req.headers.authorization.split(' ')[1];
+            console.log('尝试手动解析token:', token);
+            
+            if (token && global.jwtSecret) {
+                const decoded = jwt.verify(token, global.jwtSecret);
+                console.log('手动解析token结果:', decoded);
+                
+                if (decoded && decoded.username) {
+                    username = decoded.username;
+                    console.log('从token中获取到用户名:', username);
+                }
+            }
+        } catch (error) {
+            console.error('解析token失败:', error.message);
+        }
+    }
     
     if (!username) {
       return res.done({ code: 401, msg: '未授权' });
@@ -155,11 +181,35 @@ module.exports = function(app, hexo, use, db) {
   // 更新用户设置
   use('settings/update', function(req, res) {
     // 修改这里：使用 req.auth
-    const username = req.auth ? req.auth.username : null;
+    let username = req.auth ? req.auth.username : null;
     
-    if (!username) {
-      return res.done({ code: 401, msg: '未授权' });
+    
+
+    if (req.auth && req.auth.username) {
+      username = req.auth.username;
+      console.log('从req.auth获取到用户名:', username);
+    } 
+    // 如果req.auth不存在，尝试手动解析token
+    else if (req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
+        try {
+            const token = req.headers.authorization.split(' ')[1];
+            console.log('尝试手动解析token:', token);
+            
+            if (token && global.jwtSecret) {
+                const decoded = jwt.verify(token, global.jwtSecret);
+                console.log('手动解析token结果:', decoded);
+                
+                if (decoded && decoded.username) {
+                    username = decoded.username;
+                    console.log('从token中获取到用户名:', username);
+                }
+            }
+        } catch (error) {
+            console.error('解析token失败:', error.message);
+        }
     }
+
+    
 
     const { avatar, password, confirmPassword, menuCollapsed } = req.body;
 
@@ -211,7 +261,7 @@ module.exports = function(app, hexo, use, db) {
                 
                 // 如果更新了密码，同时更新配置文件
                 if (password) {
-                  updateConfigFile(username, password, hexo.config.hexo_pro.secret);
+                  updateConfigFile(username, password);
                 }
                 
                 res.done({ code: 0, msg: '设置已更新' });
@@ -233,7 +283,7 @@ module.exports = function(app, hexo, use, db) {
               
               // 如果更新了密码，同时更新配置文件
               if (password) {
-                updateConfigFile(username, password, hexo.config.hexo_pro.secret);
+                updateConfigFile(username, password);
               }
               
               res.done({ code: 0, msg: '设置已创建' });
@@ -324,7 +374,7 @@ module.exports = function(app, hexo, use, db) {
   });
 
   // 更新配置文件中的用户名和密码
-  function updateConfigFile(username, password, secret) {
+  function updateConfigFile(username, password) {
     try {
       // 更新数据库中的用户信息
       userDb.update(
@@ -346,7 +396,7 @@ module.exports = function(app, hexo, use, db) {
               return;
             }
             
-            const jwtSecret = secret || require('crypto').randomBytes(64).toString('hex');
+            const jwtSecret = require('crypto').randomBytes(64).toString('hex');
             
             if (settings) {
               // 更新现有设置
@@ -389,4 +439,183 @@ module.exports = function(app, hexo, use, db) {
       throw error; // 抛出异常以便上层函数知道更新失败
     }
   }
+  
+  // 在适当的位置添加以下代码，处理头像更新
+  // 注册用户时接收avatar参数
+  app.post('/hexopro/api/settings/register', function(req, res) {
+    const { username, password, confirmPassword, avatar } = req.body;
+    
+    // 验证密码
+    if (password !== confirmPassword) {
+      return res.json({ code: -1, msg: '两次输入的密码不一致' });
+    }
+    
+    // 创建用户
+    const user = {
+      username: username,
+      password: utils.md5(password),
+      avatar: avatar || '' // 保存头像URL
+    };
+    
+    // 保存用户信息
+    userDb.findOne({ username }, (err, user) => {
+      if (err || !user) {
+        return res.done({ code: 500, msg: '获取用户信息失败' });
+      }
+
+      const updateData = {};
+      
+      // 只更新提供的字段
+      if (avatar !== undefined) {
+        updateData.avatar = avatar;
+      }
+      
+      if (password) {
+        updateData.password = password;
+      }
+
+      updateData.updatedAt = new Date();
+
+      userDb.update({ username }, { $set: updateData }, { upsert: false }, (err) => {
+        if (err) {
+          return res.done({ code: 500, msg: '更新用户信息失败' });
+        }
+
+        // 更新设置
+        settingsDb.findOne({ username }, (err, settings) => {
+          if (err) {
+            return res.done({ code: 500, msg: '获取设置失败' });
+          }
+
+          if (settings) {
+            // 更新现有设置
+            settingsDb.update(
+              { username }, 
+              { $set: { menuCollapsed, updatedAt: new Date() } }, 
+              {}, 
+              (err) => {
+                if (err) {
+                  return res.done({ code: 500, msg: '更新设置失败' });
+                }
+                
+                // 如果更新了密码，同时更新配置文件
+                if (password) {
+                  updateConfigFile(username, password);
+                }
+                
+                res.done({ code: 0, msg: '设置已更新' });
+              }
+            );
+          } else {
+            // 创建新设置
+            const newSettings = {
+              username,
+              menuCollapsed,
+              createdAt: new Date(),
+              updatedAt: new Date()
+            };
+            
+            settingsDb.insert(newSettings, (err) => {
+              if (err) {
+                return res.done({ code: 500, msg: '创建设置失败' });
+              }
+              
+              // 如果更新了密码，同时更新配置文件
+              if (password) {
+                updateConfigFile(username, password);
+              }
+              
+              res.done({ code: 0, msg: '设置已创建' });
+            });
+          }
+        });
+      });
+    });
+  });
+
+  // 更新设置时接收avatar参数
+  app.post('/hexopro/api/settings/update', function(req, res) {
+    const { username, password, confirmPassword, menuCollapsed, avatar } = req.body;
+    
+    // 验证密码
+    if (password && password !== confirmPassword) {
+      return res.json({ code: -1, msg: '两次输入的密码不一致' });
+    }
+    
+    // 更新用户信息
+    const updateData = {
+      username: username,
+      menuCollapsed: menuCollapsed,
+      avatar: avatar // 保存头像URL
+    };
+    
+    // 如果提供了密码，则更新密码
+    if (password) {
+      updateData.password = utils.md5(password);
+    }
+    
+    // 保存用户信息
+    userDb.findOne({ username }, (err, user) => {
+      if (err || !user) {
+        return res.done({ code: 500, msg: '获取用户信息失败' });
+      }
+
+      updateData.updatedAt = new Date();
+
+      userDb.update({ username }, { $set: updateData }, { upsert: false }, (err) => {
+        if (err) {
+          return res.done({ code: 500, msg: '更新用户信息失败' });
+        }
+
+        // 更新设置
+        settingsDb.findOne({ username }, (err, settings) => {
+          if (err) {
+            return res.done({ code: 500, msg: '获取设置失败' });
+          }
+
+          if (settings) {
+            // 更新现有设置
+            settingsDb.update(
+              { username }, 
+              { $set: { menuCollapsed, updatedAt: new Date() } }, 
+              {}, 
+              (err) => {
+                if (err) {
+                  return res.done({ code: 500, msg: '更新设置失败' });
+                }
+                
+                // 如果更新了密码，同时更新配置文件
+                if (password) {
+                  updateConfigFile(username, password);
+                }
+                
+                res.done({ code: 0, msg: '设置已更新' });
+              }
+            );
+          } else {
+            // 创建新设置
+            const newSettings = {
+              username,
+              menuCollapsed,
+              createdAt: new Date(),
+              updatedAt: new Date()
+            };
+            
+            settingsDb.insert(newSettings, (err) => {
+              if (err) {
+                return res.done({ code: 500, msg: '创建设置失败' });
+              }
+              
+              // 如果更新了密码，同时更新配置文件
+              if (password) {
+                updateConfigFile(username, password);
+              }
+              
+              res.done({ code: 0, msg: '设置已创建' });
+            });
+          }
+        });
+      });
+    });
+  });
 };

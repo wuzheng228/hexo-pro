@@ -1,6 +1,5 @@
 'use strict';
 var serveStatic = require('serve-static');
-var bodyParser = require('body-parser');
 var path = require('path');
 var api = require('./api');
 const { expressjwt: jwt } = require('express-jwt')
@@ -140,46 +139,23 @@ hexo.extend.filter.register('server_middleware', function (app) {
         hexo.config.root + 'pro'
     ]
     console.log(unlessPaths)
-
-    app.use('/hexopro/api', bodyParser.json({ limit: '50mb' }));
-    app.use('/hexopro/api', bodyParser.urlencoded({ extended: true }));
-
     // 初始化数据库并获取 API
-    const apiInstance = api(app, hexo, needLogin);
-    
-    // 从 API 获取实际的 needLogin 状态和 secret
-    needLogin = global.actualNeedLogin;
-    // 使用全局变量 global.jwtSecret，如果为空则生成新的
-    if (!global.jwtSecret) {
-        global.jwtSecret = crypto.randomBytes(64).toString('hex');
-    }
+    // api(app, hexo, needLogin); // 旧的调用方式
+    api(app, hexo).catch(err => { // 调用 async 函数，并添加错误处理
+        console.error('[Hexo Pro]: API 初始化过程中发生未捕获错误:', err);
+    });
 
-    // 确保 JWT 中间件使用正确的 secret
-    if (global.actualNeedLogin) {
-        console.log('启用JWT验证，secret:', global.jwtSecret ? '已设置' : '未设置');
-        console.log('排除的路径:', unlessPaths);
-        
-        // 使用更简单的路径匹配方式
-        app.use('/hexopro/api', jwt({
-            secret: global.jwtSecret,
-            algorithms: ["HS256"],
-            requestProperty: 'auth' // 确保将解码后的token信息存储在req.auth中
-        }).unless({ path: [
-            '/hexopro/api/login',
-            '/hexopro/api/settings/check-first-use',
-            '/hexopro/api/settings/register'
-        ]}));
-    }
 
     app.use((err, req, res, next) => {
         if (err.name === 'UnauthorizedError') {
             res.setHeader('Content-type', 'application/json')
-            res.statusCode = 200
-            res.end(JSON.stringify({ code: 401, msg: 'token unauthrized' }))
+            res.statusCode = 200 // 或者 401
+            res.end(JSON.stringify({ code: 401, msg: 'token unauthorized' })) // 修正拼写
         } else {
+            console.error('[Hexo Pro]: 未知错误:', err); // 添加日志记录
             res.setHeader('Content-type', 'application/json')
             res.statusCode = 500
-            res.end(JSON.stringify({ code: 500, msg: 'unknown err:' + err }))
+            res.end(JSON.stringify({ code: 500, msg: 'unknown err:' + err.message })) // 返回错误消息
         }
     })
 });
