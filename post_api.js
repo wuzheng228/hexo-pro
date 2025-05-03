@@ -474,7 +474,8 @@ module.exports = function (app, hexo, use) {
 
     })
 
-    use('post/update', function(req, res, next) {
+    use('post/update/:id', function(req, res, next) {
+        let id = req.params.id
         if (!req.body) {
             return res.send(400, 'No post body given')
         }
