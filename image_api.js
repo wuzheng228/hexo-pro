@@ -187,10 +187,10 @@ module.exports = function (app, hexo, use) {
                     
                     res.done({
                         code: 0,
-                        url: `/${relativePath}`,
+                        url: hexo.config.url +  `/${relativePath}`,
                         path: relativePath,
                         name: filename,
-                        src: `/${relativePath}` // 添加src字段以兼容现有代码
+                        src:  hexo.config.url + `/${relativePath}` // 添加src字段以兼容现有代码
                     });
                 } catch (err) {
                     console.error('保存图片失败:', err);

@@ -349,7 +349,7 @@ module.exports = function(app, hexo, use, db) {
       
       // 返回图片URL - 使用图床的URL格式
       const relativePath = `images/${newFilename}`;
-      const avatarUrl = `/${relativePath}`;
+      const avatarUrl = hexo.config.url + `/${relativePath}`;
       
       // 更新用户头像URL
       userDb.update({ username }, { $set: { avatar: avatarUrl, updatedAt: new Date() } }, {}, (err) => {
