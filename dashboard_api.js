@@ -71,11 +71,17 @@ module.exports = function (app, hexo, use) {
         try {
             const parsedUrl = new URL(req.url, hexo.config.url)
             const limit = parseInt(parsedUrl.searchParams.get('limit')) || 5
+            const sortBy = parsedUrl.searchParams.get('sortBy') || 'date'
 
             const posts = hexo.model('Post').toArray()
 
-            // 按日期排序，最新的在前
-            const sortedPosts = _.sortBy(posts, post => -new Date(post.date))
+            // 根据排序字段选择排序方式
+            const sortedPosts = _.sortBy(posts, post => {
+                if (sortBy === 'updated') {
+                    return -new Date(post.updated || post.date)
+                }
+                return -new Date(post.date)
+            })
 
             // 限制返回数量
             const recentPosts = sortedPosts.slice(0, limit).map(post => {
@@ -87,6 +93,7 @@ module.exports = function (app, hexo, use) {
                     title: post.title,
                     permalink: post.permalink,
                     date: formatDateTime(post.date),
+                    updated: post.updated ? formatDateTime(post.updated) : null,
                     isDraft: isDraft
                 }
             })
