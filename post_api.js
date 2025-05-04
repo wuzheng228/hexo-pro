@@ -401,19 +401,19 @@ module.exports = function (app, hexo, use) {
     })
     // 查询单个博客信息
     use('posts/:param1/:param2', function (req, res, next) {
-        var last = req.param2
+        var last = req.params.param2
         if (last === 'publish') {
             // console.log(parts)
             // console.log(typeof parts[parts.length - 2])
-            return publish(req.param1, req.body, res)
+            return publish(req.params.param1, req.body, res)
         }
         if (last === 'unpublish') {
-            return unpublish(req.param1, req.body, res)
+            return unpublish(req.params.param1, req.body, res)
         }
         if (last === 'remove') {
-            return remove(req.param1, req.body, res)
+            return remove(req.params.param1, req.body, res)
         }
-        var id = req.param2
+        var id = req.params.param2
         if (id === 'posts' || !id) return next();
         if (req.method === 'GET') {
             id = utils.base64Decode(id)

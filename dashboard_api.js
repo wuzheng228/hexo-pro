@@ -29,6 +29,9 @@ module.exports = function (app, hexo, use) {
         try {
             const categories = []
             hexo.model('Category').forEach(function (category) {
+                if (category.posts.length == 0) {
+                    return 
+                }
                 categories.push({
                     name: category.name,
                     count: category.posts.length,
@@ -471,24 +474,25 @@ module.exports = function (app, hexo, use) {
     });
 
     // 获取最近一月新增文章数
-    use('dashboard/posts/monthly-new', function (req, res) {
-        try {
-            const posts = hexo.model('Post').toArray()
-            const now = new Date()
-            const oneMonthAgo = new Date(now.getFullYear(), now.getMonth() - 1, now.getDate())
+    use('dashboard/posts/monthly-new', function (req, res) { 
+        try { 
+            const posts = hexo.model('Post').toArray() 
+            const now = new Date() 
+            // 本月1号
+            const monthStart = new Date(now.getFullYear(), now.getMonth(), 1)
             
-            // 计算最近一个月内新增的文章数量
-            const newPostsCount = posts.filter(post => {
-                const postDate = new Date(post.date)
-                return postDate >= oneMonthAgo && postDate <= now
-            }).length
+            // 计算本月新增的文章数量 
+            const newPostsCount = posts.filter(post => { 
+                const postDate = new Date(post.date) 
+                return postDate >= monthStart && postDate <= now 
+            }).length 
     
-            res.done({
-                count: newPostsCount
-            })
-        } catch (error) {
-            console.error('获取最近一月新增文章数失败:', error)
-            res.send(500, '获取最近一月新增文章数失败')
-        }
+            res.done({ 
+                count: newPostsCount 
+            }) 
+        } catch (error) { 
+            console.error('获取本月新增文章数失败:', error) 
+            res.send(500, '获取本月新增文章数失败') 
+        } 
     })
 }
