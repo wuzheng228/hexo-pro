@@ -13,6 +13,7 @@ const cheerio = require('cheerio')
 const { v4: uuidv4 } = require('uuid');
 
 const utils = require('./utils');
+const { permalink } = require('hexo/dist/hexo/default_config')
 
 
 module.exports = function (app, hexo, use) {
@@ -298,7 +299,7 @@ module.exports = function (app, hexo, use) {
             const { item } = result;
             const highlightedText = getHighlightedTextFromHtml(item.content, req.body.searchPattern);
             return {
-                id: item.id,
+                permalink: item.permalink,
                 isPage: item.isPage,
                 isDraft: item.isDraft,
                 title: item.title,

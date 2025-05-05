@@ -40,12 +40,12 @@ function staticMiddleware(rootDir) {
 
 function buildIndex() {
     class BlogInfo {
-        constructor(title, content, isPage, isDraft, id) {
+        constructor(title, content, isPage, isDraft, permalink) {
             this.title = title
             this.content = content
             this.isPage = isPage
             this.isDraft = isDraft
-            this.id = id
+            this.permalink = permalink
         }
     }
 
@@ -55,11 +55,11 @@ function buildIndex() {
     const blogInfoList = []
 
     posts.forEach((post, _) => {
-        blogInfoList.push(new BlogInfo(post.title, post.content, false, !post.published, post._id))
+        blogInfoList.push(new BlogInfo(post.title, post.content, false, !post.published, post.permalink))
     })
 
     pages.forEach((page, _) => {
-        blogInfoList.push(new BlogInfo(page.title, page.content, true, false, page._id))
+        blogInfoList.push(new BlogInfo(page.title, page.content, true, false, page.permalink))
     })
 
     fs.writeFileSync(path.join(hexo.base_dir, 'blogInfoList.json'), JSON.stringify(blogInfoList))
