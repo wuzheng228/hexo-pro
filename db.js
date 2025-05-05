@@ -1,6 +1,8 @@
 const Datastore = require('nedb');
 const path = require('path');
 const fs = require('fs');
+// 添加 crypto 模块用于生成随机密钥
+const crypto = require('crypto');
 
 module.exports = function(hexo) {
   // 确保 data 目录存在
@@ -21,6 +23,11 @@ module.exports = function(hexo) {
     autoload: true
   });
 
+  // 生成随机 JWT 密钥的函数
+  const generateJwtSecret = () => {
+    return crypto.randomBytes(32).toString('hex');
+  };
+
   // 初始化数据库，从 _config.yml 导入初始用户（仅在数据库为空时）
   const initDb = async () => {
     try {
@@ -34,7 +41,7 @@ module.exports = function(hexo) {
 
       // 如果数据库为空且配置中有用户名和密码，则导入
       // 这是为了向后兼容，仅在首次运行时从配置导入用户
-      if (userCount === 0 && hexo.config.hexo_pro && hexo.config.hexo_pro.username) {
+      if (userCount === 0 && hexo.config.hexo_pro && hexo.config.hexo_pro.username && hexo.config.hexo_pro.password) {
         const defaultUser = {
           username: hexo.config.hexo_pro.username,
           password: hexo.config.hexo_pro.password,
@@ -52,19 +59,37 @@ module.exports = function(hexo) {
 
         console.log('[Hexo Pro]: 已从配置文件导入初始用户（仅首次运行）');
         
-        // 如果有 JWT secret，也导入到设置数据库
-        if (hexo.config.hexo_pro.secret) {
+        // 检查系统设置数据库是否为空
+        const settingsCount = await new Promise((resolve, reject) => {
+          settingsDb.count({ type: 'system' }, (err, count) => {
+            if (err) reject(err);
+            else resolve(count);
+          });
+        });
+        
+        // 如果设置为空，则导入或生成 JWT secret
+        if (settingsCount === 0) {
+          // 如果配置中有 JWT secret 则使用，否则生成一个新的
+          const jwtSecret = hexo.config.hexo_pro && hexo.config.hexo_pro.secret 
+            ? hexo.config.hexo_pro.secret 
+            : generateJwtSecret();
+          
           await new Promise((resolve, reject) => {
             settingsDb.insert({
               type: 'system',
-              jwtSecret: hexo.config.hexo_pro.secret,
+              jwtSecret: jwtSecret,
               createdAt: new Date()
             }, (err, doc) => {
               if (err) reject(err);
               else resolve(doc);
             });
           });
-          console.log('[Hexo Pro]: 已从配置文件导入 JWT 密钥');
+          
+          if (hexo.config.hexo_pro && hexo.config.hexo_pro.secret) {
+            console.log('[Hexo Pro]: 已从配置文件导入 JWT 密钥');
+          } else {
+            console.log('[Hexo Pro]: 已自动生成 JWT 密钥');
+          }
         }
 
         global.actualNeedLogin = true;
