@@ -25,7 +25,7 @@ module.exports = function (model, unimark, update, callback, hexo) {
         delete update.frontMatter
     }
 
-    console.log(newFrontMatter)
+    // console.log(newFrontMatter)
     function removeExtname(str) {
         return str.substring(0, str.length - path.extname(str).length);
     }
@@ -75,7 +75,7 @@ module.exports = function (model, unimark, update, callback, hexo) {
             if (Object.keys(newFrontMatter).includes(name)) {
                 return
             }
-            console.log('delete', name)
+            // console.log('delete', name)
             delete compiled[name]
         })
     }

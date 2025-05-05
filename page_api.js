@@ -110,7 +110,7 @@ module.exports = function (app, hexo, use) {
         const frontMatterYaml = hfm.stringify(frontMatter);
 
         // 页面内容，这里可以根据需要修改
-        const pageContent = `---\n${frontMatterYaml}\n---\n`;
+        const pageContent = `${frontMatterYaml}`;
 
         // 创建文件并写入内容
         await fs.writeFile(filePath, pageContent, async (err) => {
@@ -197,20 +197,7 @@ module.exports = function (app, hexo, use) {
     });
 
     use('pages/:id', function (req, res, next) {
-        var url = req.url
-        if (url[url.length - 1] === '/') {
-            url = url.slice(0, -1)
-        }
-        var parts = url.split('/')
-        var last = parts[parts.length - 1]
-        if (last === 'remove') {
-            return remove(parts[parts.length - 2], req.body, res)
-        }
-        if (last === 'rename') {
-            return rename(parts[parts.length - 2], req.body, res)
-        }
-
-        var id = last
+        var id = req.params.id
         if (id === 'pages' || !id) return next()
         if (req.method === 'GET') {
             id = utils.base64Decode(id)
@@ -234,6 +221,18 @@ module.exports = function (app, hexo, use) {
                 page: addIsDraft(page)
             })
         }, hexo);
+    });
+
+    use('pages/:id/:action', function (req, res, next) {
+        const id = req.params.id
+        const action = req.params.action
+
+        if (action === 'remove') {
+            return remove(id, req.body, res)
+        }
+        if (action === 'rename') {
+            return rename(id, req.body, res)
+        }
     });
 
     use('page/update', function (req, res, next) {

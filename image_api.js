@@ -60,8 +60,8 @@ module.exports = function (app, hexo, use) {
                     const relativePath = folder ? `images/${folder}/${item}` : `images/${item}`;
                     images.push({
                         name: item,
-                        path: relativePath,
-                        url: `/${relativePath}`,
+                        path:`/${relativePath}`,
+                        url: `${hexo.config.url}/${relativePath}`,
                         size: stat.size,
                         lastModified: stat.mtime
                     });
@@ -188,7 +188,7 @@ module.exports = function (app, hexo, use) {
                     res.done({
                         code: 0,
                         url: hexo.config.url +  `/${relativePath}`,
-                        path: relativePath,
+                        path: `/${relativePath}`,
                         name: filename,
                         src:  hexo.config.url + `/${relativePath}` // 添加src字段以兼容现有代码
                     });
@@ -267,10 +267,10 @@ module.exports = function (app, hexo, use) {
                     
                 res.done({
                     code: 0,
-                    url: `/${relativePath}`,
-                    path: relativePath,
+                    url: `${hexo.config.url}/${relativePath}`,
+                    path: `/${relativePath}`,
                     name: filename,
-                    src: `/${relativePath}` // 添加src字段以兼容现有代码
+                    src: `${hexo.config.url}/${relativePath}` // 添加src字段以兼容现有代码
                 });
             } catch (err) {
                 console.error('保存图片失败:', err);
@@ -316,8 +316,8 @@ module.exports = function (app, hexo, use) {
             
             res.done({
                 success: true,
-                newPath: relativePath,
-                url: `/${relativePath}`,
+                newPath: `/${relativePath}`,
+                url: `${hexo.config.url}/${relativePath}`,
                 name: newNameWithExt
             });
         } catch (err) {
@@ -367,8 +367,8 @@ module.exports = function (app, hexo, use) {
             
             res.done({
                 success: true,
-                newPath: relativePath,
-                url: `/${relativePath}`,
+                newPath: `/${relativePath}`,
+                url: `${hexo.config.url}/${relativePath}`,
                 name: path.basename(targetPath)
             });
         } catch (err) {

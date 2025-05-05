@@ -12,12 +12,12 @@ module.exports = function(app, hexo, use, db) {
       if (err) {
         return res.done({ code: 500, msg: '检查系统状态失败' });
       }
-      console.log({
-        code: 0,
-        data: {
-          isFirstUse: count === 0
-        }
-      })
+      // console.log({
+      //   code: 0,
+      //   data: {
+      //     isFirstUse: count === 0
+      //   }
+      // })
       // 返回是否是首次使用（没有用户）
       res.done({
         code: 0,

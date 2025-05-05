@@ -281,7 +281,7 @@ module.exports = function (app, hexo, use) {
   });
 
   // 更新模板
-  use('yaml/template/update', function (req, res) {
+  use('yaml/templates/update', function (req, res) {
     const { id, name, description, structure, variables } = req.body;
 
     if (!id || !name) {
@@ -346,7 +346,7 @@ module.exports = function (app, hexo, use) {
   });
 
   // 导入模板
-  use('yaml/template/import', function (req, res) {
+  use('yaml/templates/import', function (req, res) {
     const template = req.body;
 
     if (!template || !template.name) {
