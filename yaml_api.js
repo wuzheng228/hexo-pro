@@ -162,28 +162,25 @@ module.exports = function (app, hexo, use) {
           // 即使内存加载失败，也继续尝试 hexo g
         }
 
-        // 2. 使用命令行方式重新生成站点
+        // 先响应客户端，告知文件已保存成功
+        res.done({
+          success: true,
+          message: `${configType}配置文件已保存成功，正在后台重新生成站点，请稍后刷新页面查看效果。`
+        });
+
+        // 2. 在后台异步执行命令行方式重新生成站点
         exec('hexo clean && hexo g', { cwd: hexo.base_dir }, (error, stdout, stderr) => {
           if (error) {
             hexo.log.error(`重新生成站点失败: ${error.message}`);
             hexo.log.error(stderr);
-            // 返回成功保存但生成失败的警告
-            return res.done({
-              success: true,
-              warning: `${configType}配置已更新，但站点重新生成失败，请检查 Hexo 日志并手动运行 'hexo clean && hexo g'。可能需要重启服务才能生效。`
-            });
+            // 由于已经响应客户端，这里只记录日志，不再发送响应
+          } else {
+            hexo.log.info(`${configType}配置更新后，站点重新生成成功。`);
+            hexo.log.info(stdout);
           }
-
-          hexo.log.info(`${configType}配置更新后，站点重新生成成功。`);
-          hexo.log.info(stdout);
-          // 返回成功信息，并提示重启服务
-          return res.done({
-            success: true,
-            message: `${configType}配置已更新并重新生成站点。请注意：如果正在运行 'hexo server'，您可能需要手动重启服务才能在浏览器中看到更改。`
-          });
         });
 
-        // 阻止后续的 res.done({ success: true }); 执行，因为异步 exec 会处理响应
+        // 已经响应客户端，直接返回
         return;
       }
 
