@@ -1,6 +1,6 @@
 {
   "name": "hexo-pro",
-  "version": "1.1.18",
+  "version": "1.1.19",
   "description": "hexo pro a backend plugin for hexo",
   "main": "index",
   "directories": {
@@ -44,3 +44,4 @@
     "uuid": "^10.0.0"
   }
 }
+
