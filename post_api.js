@@ -421,7 +421,7 @@ module.exports = function (app, hexo, use) {
             // 使用findOne代替filter+[0]，避免undefined问题
             let post = hexo.model('Post').filter(post => {
                 const permalink = post.permalink;
-                console.log("Checking slug:", permalink, "Match result:", id === permalink);
+                // console.log("Checking slug:", permalink, "Match result:", id === permalink);
                 return id === permalink;
             });
             // 如果没找到匹配的文章
@@ -452,7 +452,7 @@ module.exports = function (app, hexo, use) {
             // 使用findOne代替filter+[0]，避免undefined问题
             let post = hexo.model('Post').filter(post => {
                 const permalink = post.permalink;
-                console.log("Checking slug:", permalink, "Match result:", id === permalink);
+                // console.log("Checking slug:", permalink, "Match result:", id === permalink);
                 return id === permalink;
             });
             // 如果没找到匹配的文章
@@ -500,7 +500,7 @@ module.exports = function (app, hexo, use) {
             // 使用findOne代替filter+[0]，避免undefined问题
             var post = hexo.model('Post').filter(post => {
                 const permalink = post.permalink;
-                console.log("Checking slug:", permalink, "Match result:", id === permalink);
+                // console.log("Checking slug:", permalink, "Match result:", id === permalink);
                 return id === permalink;
             }).data[0];
 
@@ -614,13 +614,13 @@ module.exports = function (app, hexo, use) {
     use('updateFrontMatter', function (req, res, next) {
         if (req.method !== 'POST') return next();
         if (!req.body) {
-            return res.send(400, 'No post body given');
+            return res.send(500, 'No post body given');
         }
         if (!req.body.permalink) {
-            return res.send(400, 'No permalink given');
+            return res.send(500, 'No permalink given');
         }
         if (!req.body.key || !req.body.value) {
-            return res.send(400, 'Key or value missing');
+            return res.send(500, 'Key or value missing');
         }
 
         const permalink = req.body.permalink;

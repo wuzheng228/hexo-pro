@@ -348,34 +348,52 @@ module.exports = function (app, hexo, use) {
   // 导入模板
   use('yaml/templates/import', function (req, res) {
     const template = req.body;
-
+    
     if (!template || !template.name) {
-      return res.status(400).json({ error: '无效的模板数据' });
+      return res.status(400).json({ error: '模板数据无效' });
     }
-
+    
     const templatesPath = path.join(hexo.base_dir, '_yaml_templates');
     fse.ensureDirSync(templatesPath);
-
+    
     const templatesFile = path.join(templatesPath, 'templates.json');
-
+    
     let templates = [];
     if (fs.existsSync(templatesFile)) {
       templates = JSON.parse(fse.readFileSync(templatesFile, 'utf-8'));
     }
-
-    // 添加新模板，确保有唯一ID
-    const newTemplate = {
-      ...template,
-      id: template.id || uuidv4(),
-      importedAt: new Date().toISOString()
-    };
-
-    templates.push(newTemplate);
-
+    
+    // 检查是否存在相同ID的模板
+    const existingTemplateIndex = templates.findIndex(t => t.id === template.id);
+    
+    if (existingTemplateIndex !== -1) {
+      // 如果存在相同ID的模板，更新它
+      templates[existingTemplateIndex] = {
+        ...templates[existingTemplateIndex],
+        name: template.name,
+        description: template.description || '',
+        structure: template.structure || '',
+        variables: template.variables || [],
+        updatedAt: new Date().toISOString()
+      };
+    } else {
+      // 如果不存在相同ID的模板，创建新模板（确保有唯一ID）
+      const newTemplate = {
+        id: template.id || uuidv4(), // 使用原ID或生成新ID
+        name: template.name,
+        description: template.description || '',
+        structure: template.structure || '',
+        variables: template.variables || [],
+        createdAt: new Date().toISOString()
+      };
+      
+      templates.push(newTemplate);
+    }
+    
     // 保存模板
     fs.writeFileSync(templatesFile, JSON.stringify(templates, null, 2));
-
-    res.done(newTemplate);
+    
+    res.done({ success: true });
   });
 
   // 应用模板

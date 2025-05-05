@@ -290,4 +290,34 @@ module.exports = function (app, hexo, use) {
         }
     })
 
+    use('updatePageFrontMatter', function (req, res, next) {
+            if (req.method !== 'POST') return next();
+            if (!req.body) {
+                return res.send(500, 'No post body given');
+            }
+            if (!req.body.permalink) {
+                return res.send(500, 'No permalink given');
+            }
+            if (!req.body.key || !req.body.value) {
+                return res.send(500, 'Key or value missing');
+            }
+    
+            const permalink = req.body.permalink;
+            const key = req.body.key;
+            const value = req.body.value;
+    
+            // 构建更新对象
+            const frontMatterUpdate = {};
+            frontMatterUpdate[key] = value;
+    
+            // 使用update函数更新文章
+            update(permalink, { frontMatter: frontMatterUpdate }, function (err, post) {
+                if (err) {
+                    return res.send(400, err);
+                }
+                post = _.cloneDeep(post);
+                res.done(addIsDraft(post));
+            }, hexo);
+        });
+
 }

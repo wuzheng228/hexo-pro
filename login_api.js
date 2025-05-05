@@ -82,10 +82,10 @@ module.exports = function (app, hexo, use, db) {
         }
 
         // 调试信息
-        console.log('userInfo接口被调用');
-        console.log('请求头:', req.headers);
-        console.log('Authorization:', req.headers.authorization);
-        console.log('req.auth:', req.auth);
+        // console.log('userInfo接口被调用');
+        // console.log('请求头:', req.headers);
+        // console.log('Authorization:', req.headers.authorization);
+        // console.log('req.auth:', req.auth);
 
         let username = null;
 

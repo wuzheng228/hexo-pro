@@ -25,10 +25,6 @@ module.exports = function (model, unimark, update, callback, hexo) {
         delete update.frontMatter
     }
 
-    // console.log(newFrontMatter)
-    function removeExtname(str) {
-        return str.substring(0, str.length - path.extname(str).length);
-    }
     var post = hexo.model(model).filter(post => {
 
         return unimark === post.permalink;
