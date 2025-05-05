@@ -66,6 +66,8 @@ module.exports = function(hexo) {
           });
           console.log('[Hexo Pro]: 已从配置文件导入 JWT 密钥');
         }
+
+        global.actualNeedLogin = true;
       }
     } catch (error) {
       console.error('[Hexo Pro]: 初始化数据库失败', error);
