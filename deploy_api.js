@@ -41,8 +41,8 @@ module.exports = function (app, hexo, use) {
                     $set: {
                         isDeploying: false,
                         stage: 'failed',
-                        error: '服务重启导致部署中断',
-                        logs: [...(doc.logs || []), '服务重启导致部署中断，状态已重置']
+                        error: 'deploy.interruption.cause.by.service.restart',
+                        logs: [...(doc.logs || []), 'deploy.interruption.cause.by.service.restart.status.reset']
                     }
                 }
             );
@@ -168,7 +168,7 @@ module.exports = function (app, hexo, use) {
                             isDeploying: true,
                             progress: 0,
                             stage: 'started',
-                            logs: ['开始部署过程...'],
+                            logs: ['deploy.started'],
                             error: null
                         }
                     },
@@ -341,7 +341,7 @@ module.exports = function (app, hexo, use) {
                     finalArgs = args;
                 }
 
-                addLog(`执行命令: ${finalCommand} ${finalArgs.join(' ')}`);
+                addLog(`run command: ${finalCommand} ${finalArgs.join(' ')}`);
                 const proc = spawn(finalCommand, finalArgs, mergedOptions);
 
                 proc.stdout.on('data', (data) => {
@@ -355,7 +355,7 @@ module.exports = function (app, hexo, use) {
                         // 这是正常的调试信息，不作为错误处理
                         addLog(message);
                     } else {
-                        addLog(`错误: ${message}`);
+                        addLog(`error: ${message}`);
                     }
                 });
 
@@ -368,7 +368,7 @@ module.exports = function (app, hexo, use) {
                 });
 
                 proc.on('error', (err) => {
-                    addLog(`进程错误: ${err.message}`);
+                    addLog(`Process error: ${err.message}`);
                     reject(err);
                 });
             });
@@ -379,17 +379,17 @@ module.exports = function (app, hexo, use) {
             try {
                 // 清理
                 await updateStatus({ stage: 'cleaning', progress: 10 });
-                addLog('执行清理...');
+                addLog('deploy.cleaning');
                 await runCommand('hexo', ['clean'], { cwd: baseDir });
 
                 // 生成
                 await updateStatus({ stage: 'generating', progress: 30 });
-                addLog('生成静态文件...');
+                addLog('deploy.generating');
                 await runCommand('hexo', ['generate'], { cwd: baseDir });
 
                 // 部署
                 await updateStatus({ stage: 'deploying', progress: 60 });
-                addLog('部署到 GitHub...');
+                addLog('deploy.deploying');
                 await runCommand('hexo', ['deploy'], { cwd: baseDir });
 
                 // 完成
@@ -410,7 +410,7 @@ module.exports = function (app, hexo, use) {
                     lastDeployTime: formattedTime
                 });
 
-                addLog('部署成功完成！');
+                addLog('deploy.success');
             } catch (error) {
                 console.error('部署过程出错:', error);
                 await updateStatus({
@@ -418,7 +418,8 @@ module.exports = function (app, hexo, use) {
                     stage: 'failed',
                     error: error.message
                 });
-                addLog(`部署失败: ${error.message}`);
+                addLog(`deploy.failed`);
+                addLog(error.message);
             }
         })();
     }
@@ -436,7 +437,7 @@ module.exports = function (app, hexo, use) {
                         progress: 0,
                         stage: 'idle',
                         error: null,
-                        logs: ['部署状态已重置']
+                        logs: ['deploy.status.reset']
                     }
                 },
                 {},
@@ -448,7 +449,7 @@ module.exports = function (app, hexo, use) {
 
                     res.done({
                         success: true,
-                        message: '部署状态已重置'
+                        message: 'deploy.status.reset'
                     });
                 }
             );
