@@ -1,19 +1,16 @@
 'use strict';
 var serveStatic = require('serve-static');
-var bodyParser = require('body-parser');
 var path = require('path');
 var api = require('./api');
 const { expressjwt: jwt } = require('express-jwt')
 const fs = require('fs');
 const mime = require('mime')
+// 添加查询字符串解析中间件
+const querystring = require('querystring');
+const crypto = require('crypto');
 
-let needLogin = hexo.config.hexo_pro && hexo.config.hexo_pro.username
-if (needLogin) {
-    if (!hexo.config.hexo_pro.password) {
-        console.error('[Hexo pro]: config admin.password is requred for authentication');
-        needLogin = false;
-    }
-}
+// 修改：不再从 _config.yml 获取登录信息，而是在 api 中根据数据库判断
+let needLogin = false; // 默认不需要登录，将在 api.js 中根据数据库内容决定
 
 function staticMiddleware(rootDir) {
     return function (req, res, next) {
@@ -43,12 +40,12 @@ function staticMiddleware(rootDir) {
 
 function buildIndex() {
     class BlogInfo {
-        constructor(title, content, isPage, isDraft, id) {
+        constructor(title, content, isPage, isDraft, permalink) {
             this.title = title
             this.content = content
             this.isPage = isPage
             this.isDraft = isDraft
-            this.id = id
+            this.permalink = permalink
         }
     }
 
@@ -58,11 +55,11 @@ function buildIndex() {
     const blogInfoList = []
 
     posts.forEach((post, _) => {
-        blogInfoList.push(new BlogInfo(post.title, post.content, false, !post.published, post._id))
+        blogInfoList.push(new BlogInfo(post.title, post.content, false, !post.published, post.permalink))
     })
 
     pages.forEach((page, _) => {
-        blogInfoList.push(new BlogInfo(page.title, page.content, true, false, page._id))
+        blogInfoList.push(new BlogInfo(page.title, page.content, true, false, page.permalink))
     })
 
     fs.writeFileSync(path.join(hexo.base_dir, 'blogInfoList.json'), JSON.stringify(blogInfoList))
@@ -86,6 +83,15 @@ hexo.extend.filter.register('after_post_render', function (data) {
 });
 
 hexo.extend.filter.register('server_middleware', function (app) {
+
+    // 添加查询字符串解析中间件
+    app.use((req, res, next) => {
+        if (!req.query && req.url.includes('?')) {
+            const queryStr = req.url.split('?')[1];
+            req.query = querystring.parse(queryStr);
+        }
+        next();
+    });
 
     // console.log("posts=>", hexo.locals.get("posts"))
     // 检查请求的URL是否以静态文件后缀结尾
@@ -112,38 +118,44 @@ hexo.extend.filter.register('server_middleware', function (app) {
                     res.end(data);
                 }
             });
-            staticMiddleware()
+            // staticMiddleware()
         } else {
             next();
         }
     });
     app.use('/pro', serve);
 
-    if (needLogin) {
-        app.use('/hexopro/api', jwt({ secret: hexo.config.hexo_pro.secret, algorithms: ["HS256"] }).unless({ path: ['/hexopro/api/login', '/pro'] }))
+    console.log(hexo.config.root)
+
+    let root = hexo.config.root
+    if (!root) {
+        root = ''
     }
 
+    const unlessPaths = [
+        hexo.config.root + 'hexopro/api/login', 
+        hexo.config.root + 'hexopro/api/settings/check-first-use',
+        hexo.config.root + 'hexopro/api/settings/register',
+        hexo.config.root + 'pro'
+    ]
+    console.log(unlessPaths)
+    // 初始化数据库并获取 API
+    // api(app, hexo, needLogin); // 旧的调用方式
+    api(app, hexo).catch(err => { // 调用 async 函数，并添加错误处理
+        console.error('[Hexo Pro]: API 初始化过程中发生未捕获错误:', err);
+    });
 
-    app.use('/hexopro/api', bodyParser.json({ limit: '50mb' }));
-
-
-    // setup the json api endpoints
-    api(app, hexo, needLogin);
 
     app.use((err, req, res, next) => {
         if (err.name === 'UnauthorizedError') {
             res.setHeader('Content-type', 'application/json')
-            res.statusCode = 200
-            res.end(JSON.stringify({ code: 401, msg: 'token unauthrized' }))
+            res.statusCode = 200 // 或者 401
+            res.end(JSON.stringify({ code: 401, msg: 'token unauthorized' })) // 修正拼写
         } else {
+            console.error('[Hexo Pro]: 未知错误:', err); // 添加日志记录
             res.setHeader('Content-type', 'application/json')
             res.statusCode = 500
-            res.end(JSON.stringify({ code: 500, msg: 'unknown err:' + err }))
+            res.end(JSON.stringify({ code: 500, msg: 'unknown err:' + err.message })) // 返回错误消息
         }
     })
-
-
 });
-
-
-
