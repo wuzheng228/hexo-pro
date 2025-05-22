@@ -196,6 +196,21 @@ module.exports = async function (app, hexo) { // 将导出函数改为 async
         deploy_api(app, hexo, use); // 注册部署API
         settings_api(app, hexo, use, db); // 注册设置API
 
+
+        app.use((err, req, res, next) => {
+            if (err.name === 'UnauthorizedError') {
+                console.error('[Hexo Pro]: token 验证失败:', err.message); // 添加日志记录
+                res.setHeader('Content-type', 'application/json')
+                res.statusCode = 200 // 或者 401
+                res.end(JSON.stringify({ code: 401, msg: 'token unauthorized' })) // 修正拼写
+            } else {
+                console.error('[Hexo Pro]: 未知错误:', err.message); // 添加日志记录
+                res.setHeader('Content-type', 'application/json')
+                res.statusCode = 500
+                res.end(JSON.stringify({ code: 500, msg: 'unknown err:' + err.message })) // 返回错误消息
+            }
+        })
+
     } catch (err) {
         console.error('[Hexo Pro]: API 初始化失败:', err);
         // 可以在这里添加错误处理逻辑，例如阻止服务器启动或返回错误状态

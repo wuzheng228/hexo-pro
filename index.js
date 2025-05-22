@@ -145,17 +145,4 @@ hexo.extend.filter.register('server_middleware', function (app) {
         console.error('[Hexo Pro]: API 初始化过程中发生未捕获错误:', err);
     });
 
-
-    app.use((err, req, res, next) => {
-        if (err.name === 'UnauthorizedError') {
-            res.setHeader('Content-type', 'application/json')
-            res.statusCode = 200 // 或者 401
-            res.end(JSON.stringify({ code: 401, msg: 'token unauthorized' })) // 修正拼写
-        } else {
-            console.error('[Hexo Pro]: 未知错误:', err); // 添加日志记录
-            res.setHeader('Content-type', 'application/json')
-            res.statusCode = 500
-            res.end(JSON.stringify({ code: 500, msg: 'unknown err:' + err.message })) // 返回错误消息
-        }
-    })
 });

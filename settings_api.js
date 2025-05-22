@@ -124,7 +124,7 @@ module.exports = function(app, hexo, use, db) {
      // 首先尝试从req.auth获取用户名
     if (req.auth && req.auth.username) {
         username = req.auth.username;
-        console.log('从req.auth获取到用户名:', username);
+        // console.log('从req.auth获取到用户名:', username);
     } 
     // 如果req.auth不存在，尝试手动解析token
     else if (req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
