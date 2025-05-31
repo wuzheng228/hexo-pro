@@ -11,16 +11,53 @@ module.exports = function(hexo) {
     fs.mkdirSync(dataDir, { recursive: true });
   }
 
+  // 检查并清理损坏的数据库文件
+  const cleanupCorruptedDbFiles = () => {
+    const dbFiles = ['users.db', 'settings.db'];
+    
+    dbFiles.forEach(dbFile => {
+      const filePath = path.join(dataDir, dbFile);
+      if (fs.existsSync(filePath)) {
+        const stats = fs.statSync(filePath);
+        // 如果文件大小为0字节，则删除它
+        if (stats.size === 0) {
+          console.log(`[Hexo Pro]: 检测到损坏的数据库文件 ${dbFile}，正在删除...`);
+          fs.unlinkSync(filePath);
+        }
+      }
+      
+      // 同时检查临时文件（以 ~ 结尾）
+      const tempFilePath = filePath + '~';
+      if (fs.existsSync(tempFilePath)) {
+        console.log(`[Hexo Pro]: 清理临时数据库文件 ${dbFile}~`);
+        fs.unlinkSync(tempFilePath);
+      }
+    });
+  };
+
+  // 执行清理
+  cleanupCorruptedDbFiles();
+
   // 创建用户数据库
   const userDb = new Datastore({
     filename: path.join(dataDir, 'users.db'),
-    autoload: true
+    autoload: true,
+    onload: function (error) {
+      if (error) {
+        console.error('[Hexo Pro]: 用户数据库加载失败:', error);
+      }
+    }
   });
 
   // 创建设置数据库
   const settingsDb = new Datastore({
     filename: path.join(dataDir, 'settings.db'),
-    autoload: true
+    autoload: true,
+    onload: function (error) {
+      if (error) {
+        console.error('[Hexo Pro]: 设置数据库加载失败:', error);
+      }
+    }
   });
 
   // 生成随机 JWT 密钥的函数

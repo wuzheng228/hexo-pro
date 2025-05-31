@@ -146,3 +146,8 @@ hexo.extend.filter.register('server_middleware', function (app) {
     });
 
 });
+
+// 导出buildIndex函数供桌面端使用
+module.exports = {
+    buildIndex: buildIndex
+};
