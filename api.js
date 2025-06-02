@@ -1,4 +1,3 @@
-
 const login_api = require('./login_api');
 const post_api = require('./post_api')
 const page_api = require('./page_api')
@@ -7,10 +6,12 @@ const yaml_api = require('./yaml_api');
 const dashboard_api = require('./dashboard_api'); // 添加仪表盘API
 const deploy_api = require('./deploy_api'); // 添加部署API
 const settings_api = require('./settings_api'); // 添加设置API
+const auth_api = require('./auth_api'); // 添加认证API
 const CircularJSON = require('circular-json');
 const crypto = require('crypto');
 const { expressjwt: jwt } = require('express-jwt'); // 确保引入 express-jwt
 const bodyParser = require('body-parser');
+const databaseManager = require('./database-manager'); // 导入数据库管理器
 
 // Helper function to promisify NeDB methods
 function promisifyNeDB(db, method, ...args) {
@@ -109,33 +110,35 @@ module.exports = async function (app, hexo) { // 将导出函数改为 async
         }
     }
     
-    // 初始化数据库
-    const db = require('./db')(hexo);
-    
     // 将actualNeedLogin和jwtSecret设为全局变量，以便其他模块可以访问
     global.actualNeedLogin = false;
     global.jwtSecret = null;
 
     try {
-        // --- 使用 async/await 等待数据库检查完成 ---
+        // --- 使用数据库管理器初始化数据库 ---
+        console.log('[Hexo Pro API]: 初始化数据库...');
+        const db = await databaseManager.initialize(hexo);
+        console.log('[Hexo Pro API]: 数据库初始化完成');
+
+        // --- 检查用户数量并设置认证状态 ---
         const count = await promisifyNeDB(db.userDb, 'count', {});
-        console.log('[Hexo Pro]: 用户数量检查完成, count:', count);
+        console.log('[Hexo Pro API]: 用户数量检查完成, count:', count);
 
         if (count > 0) {
             global.actualNeedLogin = true;
-            console.log('[Hexo Pro]: 数据库中存在用户，启用登录验证');
+            console.log('[Hexo Pro API]: 数据库中存在用户，启用登录验证');
 
             // 获取或生成 JWT secret
             let settings = await promisifyNeDB(db.settingsDb, 'findOne', { type: 'system' });
-            console.log('[Hexo Pro]: 系统设置检查完成, settings:', settings);
+            console.log('[Hexo Pro API]: 系统设置检查完成');
 
             if (settings && settings.jwtSecret) {
                 global.jwtSecret = settings.jwtSecret;
-                console.log('[Hexo Pro]: 从数据库加载 JWT 密钥');
+                console.log('[Hexo Pro API]: 从数据库加载 JWT 密钥');
             } else {
                 // 生成新的 JWT secret
                 global.jwtSecret = crypto.randomBytes(64).toString('hex');
-                console.log('[Hexo Pro]: 生成新的 JWT 密钥');
+                console.log('[Hexo Pro API]: 生成新的 JWT 密钥');
 
                 // 保存到数据库
                 const systemSettingUpdate = {
@@ -146,14 +149,14 @@ module.exports = async function (app, hexo) { // 将导出函数改为 async
                 if (!settings) {
                     systemSettingUpdate.createdAt = new Date();
                     await promisifyNeDB(db.settingsDb, 'insert', systemSettingUpdate);
-                    console.log('[Hexo Pro]: 新 JWT 密钥已保存到数据库 (insert)');
+                    console.log('[Hexo Pro API]: 新 JWT 密钥已保存到数据库 (insert)');
                 } else {
                     await promisifyNeDB(db.settingsDb, 'update', { type: 'system' }, { $set: systemSettingUpdate }, {});
-                    console.log('[Hexo Pro]: 新 JWT 密钥已保存到数据库 (update)');
+                    console.log('[Hexo Pro API]: 新 JWT 密钥已保存到数据库 (update)');
                 }
             }
         } else {
-            console.log('[Hexo Pro]: 数据库中没有用户，无需登录验证');
+            console.log('[Hexo Pro API]: 数据库中没有用户，无需登录验证');
         }
 
         // --- 在数据库检查完成后配置 JWT 中间件和路由 ---
@@ -162,7 +165,11 @@ module.exports = async function (app, hexo) { // 将导出函数改为 async
         const unlessPaths = [
             `${apiBasePath}/login`,
             `${apiBasePath}/settings/check-first-use`,
-            `${apiBasePath}/settings/register`
+            `${apiBasePath}/settings/register`,
+            `${apiBasePath}/auth/status`, // 添加认证状态检查路径到排除列表
+            `${apiBasePath}/desktop/status`, // 添加桌面端状态API到排除列表
+            `${apiBasePath}/desktop/auth-check`, // 添加桌面端认证检查API到排除列表  
+            `${apiBasePath}/desktop/save-token` // 添加桌面端保存token API到排除列表
         ];
 
 
@@ -172,7 +179,7 @@ module.exports = async function (app, hexo) { // 将导出函数改为 async
 
             if (!global.jwtSecret) {
                  // 理论上不应该发生，因为上面已经处理了生成逻辑
-                console.error('[Hexo Pro]: 严重错误 - JWT Secret 未能生成或加载!');
+                console.error('[Hexo Pro API]: 严重错误 - JWT Secret 未能生成或加载!');
                 global.jwtSecret = crypto.randomBytes(64).toString('hex'); // 再次尝试生成以防万一
             }
 
@@ -183,7 +190,7 @@ module.exports = async function (app, hexo) { // 将导出函数改为 async
                 requestProperty: 'auth' // 确保将解码后的token信息存储在req.auth中
             }).unless({ path: unlessPaths })); // 排除特定路径
         } else {
-             console.log('[Hexo Pro]: 未启用JWT验证');
+             console.log('[Hexo Pro API]: 未启用JWT验证');
         }
 
         // 注册所有 API 路由
@@ -193,18 +200,19 @@ module.exports = async function (app, hexo) { // 将导出函数改为 async
         image_api(app, hexo, use); // 注册图片API
         yaml_api(app, hexo, use);
         dashboard_api(app, hexo, use); // 注册仪表盘API
-        deploy_api(app, hexo, use); // 注册部署API
+        deploy_api(app, hexo, use, db); // 传递数据库实例到部署API
         settings_api(app, hexo, use, db); // 注册设置API
+        auth_api(app, hexo, use); // 注册认证API
 
 
         app.use((err, req, res, next) => {
             if (err.name === 'UnauthorizedError') {
-                console.error('[Hexo Pro]: token 验证失败:', err.message); // 添加日志记录
+                console.error('[Hexo Pro API]: token 验证失败:', err.message); // 添加日志记录
                 res.setHeader('Content-type', 'application/json')
                 res.statusCode = 200 // 或者 401
                 res.end(JSON.stringify({ code: 401, msg: 'token unauthorized' })) // 修正拼写
             } else {
-                console.error('[Hexo Pro]: 未知错误:', err.message); // 添加日志记录
+                console.error('[Hexo Pro API]: 未知错误:', err.message); // 添加日志记录
                 res.setHeader('Content-type', 'application/json')
                 res.statusCode = 500
                 res.end(JSON.stringify({ code: 500, msg: 'unknown err:' + err.message })) // 返回错误消息
@@ -212,7 +220,7 @@ module.exports = async function (app, hexo) { // 将导出函数改为 async
         })
 
     } catch (err) {
-        console.error('[Hexo Pro]: API 初始化失败:', err);
+        console.error('[Hexo Pro API]: API 初始化失败:', err);
         // 可以在这里添加错误处理逻辑，例如阻止服务器启动或返回错误状态
     }
 

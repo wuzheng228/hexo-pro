@@ -13,7 +13,7 @@ module.exports = function(hexo) {
 
   // 检查并清理损坏的数据库文件
   const cleanupCorruptedDbFiles = () => {
-    const dbFiles = ['users.db', 'settings.db'];
+    const dbFiles = ['users.db', 'settings.db', 'deploy_status.db'];
     
     dbFiles.forEach(dbFile => {
       const filePath = path.join(dataDir, dbFile);
@@ -35,38 +35,138 @@ module.exports = function(hexo) {
     });
   };
 
-  // 执行清理
-  cleanupCorruptedDbFiles();
-
-  // 创建用户数据库
-  const userDb = new Datastore({
-    filename: path.join(dataDir, 'users.db'),
-    autoload: true,
-    onload: function (error) {
-      if (error) {
-        console.error('[Hexo Pro]: 用户数据库加载失败:', error);
-      }
-    }
-  });
-
-  // 创建设置数据库
-  const settingsDb = new Datastore({
-    filename: path.join(dataDir, 'settings.db'),
-    autoload: true,
-    onload: function (error) {
-      if (error) {
-        console.error('[Hexo Pro]: 设置数据库加载失败:', error);
-      }
-    }
-  });
+  // 创建带重试的数据库加载函数
+  const createDatabase = (filename, retryCount = 3, delay = 1000) => {
+    return new Promise((resolve, reject) => {
+      let attempts = 0;
+      
+      const attemptLoad = () => {
+        attempts++;
+        console.log(`[Hexo Pro]: 尝试加载数据库 ${filename} (第 ${attempts}/${retryCount} 次)`);
+        
+        const db = new Datastore({
+          filename: path.join(dataDir, filename),
+          autoload: true,
+          onload: function (error) {
+            if (error) {
+              console.error(`[Hexo Pro]: 数据库 ${filename} 加载失败 (第 ${attempts} 次尝试):`, error);
+              
+              if (attempts < retryCount) {
+                console.log(`[Hexo Pro]: ${delay}ms 后重试加载数据库 ${filename}...`);
+                setTimeout(attemptLoad, delay);
+              } else {
+                console.error(`[Hexo Pro]: 数据库 ${filename} 加载失败，已达到最大重试次数`);
+                reject(new Error(`数据库 ${filename} 加载失败: ${error.message}`));
+              }
+            } else {
+              console.log(`[Hexo Pro]: 数据库 ${filename} 加载成功`);
+              resolve(db);
+            }
+          }
+        });
+      };
+      
+      attemptLoad();
+    });
+  };
 
   // 生成随机 JWT 密钥的函数
   const generateJwtSecret = () => {
     return crypto.randomBytes(32).toString('hex');
   };
 
-  // 初始化数据库，从 _config.yml 导入初始用户（仅在数据库为空时）
-  const initDb = async () => {
+  // 初始化数据库的主函数 - 返回 Promise
+  const initializeDatabase = async () => {
+    try {
+      // 执行清理
+      cleanupCorruptedDbFiles();
+
+      // 并行创建所有数据库，确保都加载成功
+      console.log('[Hexo Pro]: 开始初始化所有数据库...');
+      
+      const [userDb, settingsDb, deployStatusDb] = await Promise.all([
+        createDatabase('users.db'),
+        createDatabase('settings.db'),
+        createDatabase('deploy_status.db')
+      ]);
+
+      console.log('[Hexo Pro]: 所有数据库加载完成');
+
+      // 初始化部署状态数据库
+      await initializeDeployStatus(deployStatusDb);
+
+      // 初始化用户和设置数据库
+      await initializeUserAndSettings(userDb, settingsDb, hexo);
+
+      return {
+        userDb,
+        settingsDb,
+        deployStatusDb
+      };
+    } catch (error) {
+      console.error('[Hexo Pro]: 数据库初始化失败:', error);
+      throw error;
+    }
+  };
+
+  // 初始化部署状态数据库
+  const initializeDeployStatus = async (deployStatusDb) => {
+    return new Promise((resolve, reject) => {
+      deployStatusDb.findOne({ type: 'status' }, (err, doc) => {
+        if (err) {
+          reject(err);
+          return;
+        }
+
+        if (!doc) {
+          deployStatusDb.insert({
+            type: 'status',
+            isDeploying: false,
+            progress: 0,
+            stage: 'idle',
+            lastDeployTime: '',
+            logs: [],
+            error: null
+          }, (insertErr) => {
+            if (insertErr) {
+              reject(insertErr);
+            } else {
+              console.log('[Hexo Pro]: 部署状态数据库初始化完成');
+              resolve();
+            }
+          });
+        } else if (doc.isDeploying) {
+          // 如果服务重启时发现有未完成的部署，自动重置状态
+          deployStatusDb.update(
+            { type: 'status' },
+            {
+              $set: {
+                isDeploying: false,
+                stage: 'failed',
+                error: 'deploy.interruption.cause.by.service.restart',
+                logs: [...(doc.logs || []), 'deploy.interruption.cause.by.service.restart.status.reset']
+              }
+            },
+            {},
+            (updateErr) => {
+              if (updateErr) {
+                reject(updateErr);
+              } else {
+                console.log('[Hexo Pro]: 检测到未完成的部署，已重置状态');
+                resolve();
+              }
+            }
+          );
+        } else {
+          console.log('[Hexo Pro]: 部署状态数据库已存在');
+          resolve();
+        }
+      });
+    });
+  };
+
+  // 初始化用户和设置数据库，从 _config.yml 导入初始用户（仅在数据库为空时）
+  const initializeUserAndSettings = async (userDb, settingsDb, hexo) => {
     try {
       // 检查用户数据库是否为空
       const userCount = await new Promise((resolve, reject) => {
@@ -132,15 +232,11 @@ module.exports = function(hexo) {
         global.actualNeedLogin = true;
       }
     } catch (error) {
-      console.error('[Hexo Pro]: 初始化数据库失败', error);
+      console.error('[Hexo Pro]: 初始化用户和设置数据库失败', error);
+      throw error;
     }
   };
 
-  // 执行初始化
-  initDb();
-
-  return {
-    userDb,
-    settingsDb
-  };
+  // 返回初始化函数的 Promise
+  return initializeDatabase();
 };

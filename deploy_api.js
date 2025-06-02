@@ -4,50 +4,14 @@ const fse = require('fs-extra');
 const { exec, spawn } = require('child_process');
 const utils = require('./utils');
 const yaml = require('js-yaml');
-const Datastore = require('nedb');
 
-module.exports = function (app, hexo, use) {
-    // 初始化 NeDB 数据库
-    const dbPath = path.join(hexo.base_dir, 'data');
-    if (!fs.existsSync(dbPath)) {
-        fs.mkdirsSync(dbPath);
+module.exports = function (app, hexo, use, db) {
+    // 使用传入的统一数据库实例，而不是创建自己的
+    if (!db || !db.deployStatusDb) {
+        throw new Error('[Hexo Pro]: 部署API需要数据库实例');
     }
 
-    const db = {
-        deployStatus: new Datastore({
-            filename: path.join(dbPath, 'deploy_status.db'),
-            autoload: true
-        })
-    };
-
-    // 初始化部署状态
-    // 在初始化部署状态的代码块中添加
-    db.deployStatus.findOne({ type: 'status' }, (err, doc) => {
-        if (!doc) {
-            db.deployStatus.insert({
-                type: 'status',
-                isDeploying: false,
-                progress: 0,
-                stage: 'idle',
-                lastDeployTime: '',
-                logs: [],
-                error: null
-            });
-        } else if (doc.isDeploying) {
-            // 如果服务重启时发现有未完成的部署，自动重置状态
-            db.deployStatus.update(
-                { type: 'status' },
-                {
-                    $set: {
-                        isDeploying: false,
-                        stage: 'failed',
-                        error: 'deploy.interruption.cause.by.service.restart',
-                        logs: [...(doc.logs || []), 'deploy.interruption.cause.by.service.restart.status.reset']
-                    }
-                }
-            );
-        }
-    });
+    const deployStatusDb = db.deployStatusDb;
 
     // 获取部署配置
     use('deploy/config', function (req, res) {
@@ -134,7 +98,7 @@ module.exports = function (app, hexo, use) {
 
         try {
             // 检查是否正在部署
-            db.deployStatus.findOne({ type: 'status' }, (err, status) => {
+            deployStatusDb.findOne({ type: 'status' }, (err, status) => {
                 if (err) {
                     return res.send(500, '获取部署状态失败');
                 }
@@ -161,7 +125,7 @@ module.exports = function (app, hexo, use) {
                 }
 
                 // 更新部署状态为进行中
-                db.deployStatus.update(
+                deployStatusDb.update(
                     { type: 'status' },
                     {
                         $set: {
@@ -187,7 +151,7 @@ module.exports = function (app, hexo, use) {
                         });
 
                         // 异步执行部署
-                        executeDeployAsync(hexo.base_dir, db, config);
+                        executeDeployAsync(hexo.base_dir, deployStatusDb, config);
                     }
                 );
             });
@@ -200,7 +164,7 @@ module.exports = function (app, hexo, use) {
     // 检查部署状态 - 增强版
     use('deploy/status', function (req, res) {
         try {
-            db.deployStatus.findOne({ type: 'status' }, (err, status) => {
+            deployStatusDb.findOne({ type: 'status' }, (err, status) => {
                 if (err) {
                     return res.send(500, '获取部署状态失败');
                 }
@@ -284,11 +248,34 @@ module.exports = function (app, hexo, use) {
         }
     }
 
+    // 辅助函数：处理提交消息模板
+    function processCommitMessage(message) {
+        // 替换 {{ now("YYYY-MM-DD HH:mm:ss") }} 格式
+        return message.replace(/\{\{\s*now\(["']([^"']+)["']\)\s*\}\}/g, (match, format) => {
+            const now = new Date();
+            // 简单的日期格式化
+            const year = now.getFullYear();
+            const month = String(now.getMonth() + 1).padStart(2, '0');
+            const day = String(now.getDate()).padStart(2, '0');
+            const hours = String(now.getHours()).padStart(2, '0');
+            const minutes = String(now.getMinutes()).padStart(2, '0');
+            const seconds = String(now.getSeconds()).padStart(2, '0');
+            
+            return format
+                .replace('YYYY', year)
+                .replace('MM', month)
+                .replace('DD', day)
+                .replace('HH', hours)
+                .replace('mm', minutes)
+                .replace('ss', seconds);
+        });
+    }
+
     // 辅助函数：异步执行部署过程
-    function executeDeployAsync(baseDir, db, config) {
+    function executeDeployAsync(baseDir, deployStatusDb, config) {
         const updateStatus = (update) => {
             return new Promise((resolve, reject) => {
-                db.deployStatus.update(
+                deployStatusDb.update(
                     { type: 'status' },
                     { $set: update },
                     {},
@@ -306,10 +293,10 @@ module.exports = function (app, hexo, use) {
 
         const addLog = (message) => {
             console.log(message);
-            db.deployStatus.findOne({ type: 'status' }, (err, status) => {
+            deployStatusDb.findOne({ type: 'status' }, (err, status) => {
                 if (!err && status) {
                     const logs = [...status.logs, message];
-                    db.deployStatus.update(
+                    deployStatusDb.update(
                         { type: 'status' },
                         { $set: { logs: logs } },
                         {}
@@ -320,25 +307,22 @@ module.exports = function (app, hexo, use) {
 
         const runCommand = (command, args, options) => {
             return new Promise((resolve, reject) => {
-                // 使用 npx 调用 hexo 命令
-                let finalCommand, finalArgs;
-                const mergedOptions = { 
+                let finalCommand = command;
+                let finalArgs = args;
+                let mergedOptions = { 
                     ...options,
-                    shell: true,  // 在 Windows 上使用 shell 模式
-                    windowsVerbatimArguments: false  // 禁用逐字参数处理
+                    shell: true,
+                    windowsVerbatimArguments: false
                 };
 
-                if (command === 'hexo') {
-                    if (process.platform === 'win32') {
-                        finalCommand = 'npx';
-                        finalArgs = ['hexo', ...args];
-                    } else {
-                        finalCommand = 'npx';
-                        finalArgs = ['hexo', ...args];
+                // 对于 git commit 命令，使用特殊处理避免 shell 解析问题
+                if (command === 'git' && args[0] === 'commit' && args.includes('-m')) {
+                    const messageIndex = args.indexOf('-m') + 1;
+                    if (messageIndex < args.length) {
+                        // 创建新的参数数组，确保提交消息被正确引用
+                        finalArgs = [...args];
+                        finalArgs[messageIndex] = `"${args[messageIndex]}"`;
                     }
-                } else {
-                    finalCommand = command;
-                    finalArgs = args;
                 }
 
                 addLog(`run command: ${finalCommand} ${finalArgs.join(' ')}`);
@@ -350,9 +334,7 @@ module.exports = function (app, hexo, use) {
 
                 proc.stderr.on('data', (data) => {
                     const message = data.toString().trim();
-                    // 过滤掉调试器相关的信息
                     if (message.includes('Waiting for the debugger to disconnect')) {
-                        // 这是正常的调试信息，不作为错误处理
                         addLog(message);
                     } else {
                         addLog(`error: ${message}`);
@@ -374,23 +356,125 @@ module.exports = function (app, hexo, use) {
             });
         };
 
+        // 自定义 Git 部署函数
+        const customGitDeploy = async (baseDir, config) => {
+            const deployDir = path.join(baseDir, '.deploy_git');
+            const publicDir = path.join(baseDir, 'public');
+            
+            // 构建仓库URL
+            const repoUrl = config.token
+                ? `https://${config.token}@github.com/${config.repository}.git`
+                : `https://github.com/${config.repository}.git`;
+
+            // 处理提交消息
+            const commitMessage = processCommitMessage(config.message || 'Site updated');
+
+            addLog('deploy.git.preparing');
+
+            // 检查 public 目录是否存在
+            if (!fs.existsSync(publicDir)) {
+                throw new Error('public 目录不存在，请先运行 hexo generate');
+            }
+
+            // 初始化或更新 .deploy_git 目录
+            if (!fs.existsSync(deployDir)) {
+                addLog('deploy.git.cloning');
+                await runCommand('git', ['clone', repoUrl, '.deploy_git'], { cwd: baseDir });
+            } else {
+                addLog('deploy.git.updating');
+                
+                // 检查并设置 origin remote
+                try {
+                    // 检查 origin remote 是否存在
+                    await runCommand('git', ['remote', 'get-url', 'origin'], { cwd: deployDir });
+                } catch (error) {
+                    // origin 不存在，添加它
+                    addLog('deploy.git.adding.origin');
+                    await runCommand('git', ['remote', 'add', 'origin', repoUrl], { cwd: deployDir });
+                }
+                
+                // 确保 origin URL 是正确的
+                try {
+                    await runCommand('git', ['remote', 'set-url', 'origin', repoUrl], { cwd: deployDir });
+                } catch (error) {
+                    addLog('deploy.git.remote.set.url.failed');
+                }
+                
+                // 切换到指定分支
+                try {
+                    await runCommand('git', ['checkout', config.branch || 'main'], { cwd: deployDir });
+                } catch (error) {
+                    // 如果分支不存在，创建新分支
+                    addLog(`deploy.git.creating.branch: ${config.branch || 'main'}`);
+                    await runCommand('git', ['checkout', '-b', config.branch || 'main'], { cwd: deployDir });
+                }
+                
+                // 拉取最新更改
+                try {
+                    await runCommand('git', ['pull', 'origin', config.branch || 'main'], { cwd: deployDir });
+                } catch (error) {
+                    addLog('deploy.git.pull.failed.continuing');
+                }
+            }
+
+            addLog('deploy.git.copying.files');
+            
+            // 清空 deploy 目录（除了 .git）
+            const files = await fse.readdir(deployDir);
+            for (const file of files) {
+                if (file !== '.git') {
+                    await fse.remove(path.join(deployDir, file));
+                }
+            }
+
+            // 复制 public 目录内容到 deploy 目录
+            await fse.copy(publicDir, deployDir, {
+                filter: (src, dest) => {
+                    // 不复制 .git 目录
+                    return !src.includes('.git');
+                }
+            });
+
+            addLog('deploy.git.adding.files');
+            
+            // Git 操作
+            await runCommand('git', ['add', '.'], { cwd: deployDir });
+
+            // 检查是否有变更
+            try {
+                await runCommand('git', ['diff', '--staged', '--quiet'], { cwd: deployDir });
+                addLog('deploy.git.no.changes');
+                return; // 没有变更，直接返回
+            } catch (error) {
+                // 有变更，继续提交
+                addLog('deploy.git.committing');
+            }
+
+            await runCommand('git', ['commit', '-m', commitMessage], { cwd: deployDir });
+
+            addLog('deploy.git.pushing');
+            await runCommand('git', ['push', 'origin', config.branch || 'main'], { cwd: deployDir });
+            
+            addLog('deploy.git.success');
+        };
+
         // 开始部署流程
         (async () => {
             try {
                 // 清理
                 await updateStatus({ stage: 'cleaning', progress: 10 });
                 addLog('deploy.cleaning');
-                await runCommand('hexo', ['clean'], { cwd: baseDir });
+                await runCommand('npx', ['hexo', 'clean'], { cwd: baseDir });
 
                 // 生成
                 await updateStatus({ stage: 'generating', progress: 30 });
                 addLog('deploy.generating');
-                await runCommand('hexo', ['generate'], { cwd: baseDir });
+                await runCommand('npx', ['hexo', 'generate'], { cwd: baseDir });
 
-                // 部署
+                // 自定义 Git 部署
                 await updateStatus({ stage: 'deploying', progress: 60 });
                 addLog('deploy.deploying');
-                await runCommand('hexo', ['deploy'], { cwd: baseDir });
+                await customGitDeploy(baseDir, config);
 
                 // 完成
                 const now = new Date();
@@ -429,7 +513,7 @@ module.exports = function (app, hexo, use) {
         if (req.method !== 'POST') return next();
 
         try {
-            db.deployStatus.update(
+            deployStatusDb.update(
                 { type: 'status' },
                 {
                     $set: {
@@ -456,6 +540,52 @@ module.exports = function (app, hexo, use) {
         } catch (error) {
             console.error('重置部署状态失败:', error);
             res.send(500, `重置部署状态失败: ${error.message}`);
+        }
+    });
+
+    // 清理部署目录
+    use('deploy/cleanup', function (req, res, next) {
+        if (req.method !== 'POST') return next();
+
+        try {
+            const deployDir = path.join(hexo.base_dir, '.deploy_git');
+            
+            if (fs.existsSync(deployDir)) {
+                fse.removeSync(deployDir);
+                
+                // 同时重置部署状态
+                deployStatusDb.update(
+                    { type: 'status' },
+                    {
+                        $set: {
+                            isDeploying: false,
+                            progress: 0,
+                            stage: 'idle',
+                            error: null,
+                            logs: ['deploy.cleanup.success']
+                        }
+                    },
+                    {},
+                    (err) => {
+                        if (err) {
+                            console.error('重置部署状态失败:', err);
+                        }
+                    }
+                );
+
+                res.done({
+                    success: true,
+                    message: '部署目录已清理，下次部署将重新克隆仓库'
+                });
+            } else {
+                res.done({
+                    success: true,
+                    message: '部署目录不存在，无需清理'
+                });
+            }
+        } catch (error) {
+            console.error('清理部署目录失败:', error);
+            res.send(500, `清理部署目录失败: ${error.message}`);
         }
     });
 };
