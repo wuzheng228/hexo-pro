@@ -12,17 +12,55 @@ module.exports = function(app, hexo, use, db) {
       if (err) {
         return res.done({ code: 500, msg: '检查系统状态失败' });
       }
-      // console.log({
-      //   code: 0,
-      //   data: {
-      //     isFirstUse: count === 0
-      //   }
-      // })
-      // 返回是否是首次使用（没有用户）
-      res.done({
-        code: 0,
-        data: {
-          isFirstUse: count === 0
+      
+      // 如果没有用户，直接返回首次使用
+      if (count === 0) {
+        return res.done({
+          code: 0,
+          data: {
+            isFirstUse: true,
+            hasTemporaryUser: false
+          }
+        });
+      }
+      
+      // 如果有用户，检查是否只有临时用户
+      userDb.find({}, (err, users) => {
+        if (err) {
+          return res.done({ code: 500, msg: '检查系统状态失败' });
+        }
+        
+        // 检查是否所有用户都是临时用户
+        const hasRealUser = users.some(user => !user.isTemporary);
+        const hasTemporaryUser = users.some(user => user.isTemporary);
+        
+        if (!hasRealUser && hasTemporaryUser) {
+          // 只有临时用户，仍然算是首次使用
+          return res.done({
+            code: 0,
+            data: {
+              isFirstUse: true,
+              hasTemporaryUser: true
+            }
+          });
+        } else if (hasRealUser) {
+          // 有正式用户，不是首次使用
+          return res.done({
+            code: 0,
+            data: {
+              isFirstUse: false,
+              hasTemporaryUser: hasTemporaryUser
+            }
+          });
+        } else {
+          // 理论上不会到达这里，但为了安全起见
+          return res.done({
+            code: 0,
+            data: {
+              isFirstUse: true,
+              hasTemporaryUser: false
+            }
+          });
         }
       });
     });
@@ -36,83 +74,310 @@ module.exports = function(app, hexo, use, db) {
         return res.done({ code: 500, msg: '检查系统状态失败' });
       }
       
-      // 如果已有用户，不允许注册
-      if (count > 0) {
-        return res.done({ code: 403, msg: '系统已初始化，不能再次注册' });
+      // 如果没有用户，直接允许注册
+      if (count === 0) {
+        proceedWithRegistration();
+      } else {
+        // 如果有用户，检查是否只有临时用户
+        userDb.find({}, (err, users) => {
+          if (err) {
+            return res.done({ code: 500, msg: '检查系统状态失败' });
+          }
+          
+          const hasRealUser = users.some(user => !user.isTemporary);
+          const tempUsers = users.filter(user => user.isTemporary);
+          
+          if (hasRealUser) {
+            // 已有正式用户，不允许注册
+            return res.done({ code: 403, msg: '系统已初始化，不能再次注册' });
+          } else if (tempUsers.length > 0) {
+            // 只有临时用户，可以注册正式用户，但需要先清理临时用户
+            cleanupTemporaryUsersAndProceed(tempUsers);
+          } else {
+            // 理论上不会到达这里，但为了安全起见，允许注册
+            proceedWithRegistration();
+          }
+        });
       }
       
-      const { username, password, confirmPassword, avatar } = req.body;
-      
-      // 验证输入
-      if (!username || !password) {
-        return res.done({ code: 400, msg: '用户名和密码不能为空' });
+      // 清理临时用户并继续注册
+      function cleanupTemporaryUsersAndProceed(tempUsers) {
+        console.log('[Hexo Pro]: 清理临时用户，准备注册正式用户');
+        
+        // 删除所有临时用户
+        const tempUsernames = tempUsers.map(user => user.username);
+        
+        // 删除临时用户记录
+        userDb.remove({ isTemporary: true }, { multi: true }, (err) => {
+          if (err) {
+            console.error('[Hexo Pro]: 删除临时用户失败:', err);
+            return res.done({ code: 500, msg: '清理临时用户失败' });
+          }
+          
+          // 删除临时用户的设置
+          settingsDb.remove({ username: { $in: tempUsernames } }, { multi: true }, (err) => {
+            if (err) {
+              console.error('[Hexo Pro]: 删除临时用户设置失败:', err);
+              // 不阻止注册流程，继续执行
+            }
+            
+            console.log('[Hexo Pro]: 临时用户清理完成，开始正式注册');
+            proceedWithRegistration();
+          });
+        });
       }
       
-      if (password !== confirmPassword) {
-        return res.done({ code: 400, msg: '两次输入的密码不一致' });
-      }
-      
-      // 创建新用户
-      const newUser = {
-        username,
-        password,
-        avatar: avatar || '',
-        createdAt: new Date(),
-        updatedAt: new Date()
-      };
-      
-      userDb.insert(newUser, (err) => {
-        if (err) {
-          return res.done({ code: 500, msg: '创建用户失败' });
+      // 执行注册流程
+      function proceedWithRegistration() {
+        const { username, password, confirmPassword, avatar } = req.body;
+        
+        // 验证输入
+        if (!username || !password) {
+          return res.done({ code: 400, msg: '用户名和密码不能为空' });
         }
         
-        // 创建默认设置
-        const newSettings = {
+        if (password !== confirmPassword) {
+          return res.done({ code: 400, msg: '两次输入的密码不一致' });
+        }
+        
+        // 创建新用户（正式用户，不是临时用户）
+        const newUser = {
           username,
-          menuCollapsed: false,
+          password,
+          avatar: avatar || '',
+          isTemporary: false, // 明确标记为正式用户
           createdAt: new Date(),
           updatedAt: new Date()
         };
         
-        settingsDb.insert(newSettings, (err) => {
+        userDb.insert(newUser, (err) => {
           if (err) {
-            return res.done({ code: 500, msg: '创建设置失败' });
+            return res.done({ code: 500, msg: '创建用户失败' });
           }
           
-          // 创建系统设置，生成JWT密钥
-          const jwtSecret = require('crypto').randomBytes(64).toString('hex');
-          // 同时更新全局变量
-          global.jwtSecret = jwtSecret;
+          // 创建默认设置
+          const newSettings = {
+            username,
+            menuCollapsed: false,
+            createdAt: new Date(),
+            updatedAt: new Date()
+          };
           
-          settingsDb.insert({
-            type: 'system',
-            jwtSecret: global.jwtSecret,
-            createdAt: new Date()
-          }, (err) => {
+          settingsDb.insert(newSettings, (err) => {
             if (err) {
-              return res.done({ code: 500, msg: '创建系统设置失败' });
+              return res.done({ code: 500, msg: '创建设置失败' });
             }
             
-            // 返回成功信息和JWT令牌
-            const jwt = require('jsonwebtoken');
-            const token = jwt.sign({ username }, global.jwtSecret, { expiresIn: '7d' });
-            
-            // 更新全局的needLogin状态为true
-            global.actualNeedLogin = true;
-            console.log('[Hexo Pro]: 用户注册成功，已更新登录验证状态为true');
-            
-            res.done({
-              code: 0,
-              msg: '注册成功',
-              data: {
-                token,
-                username,
-                avatar: newUser.avatar
-              }
+            // 确保系统设置存在，生成或更新JWT密钥
+            ensureSystemSettings((jwtSecret) => {
+              // 返回成功信息和JWT令牌
+              const jwt = require('jsonwebtoken');
+              const token = jwt.sign({ username }, jwtSecret, { expiresIn: '7d' });
+              
+              // 更新全局的needLogin状态为true（因为现在有正式用户了）
+              global.actualNeedLogin = true;
+              console.log('[Hexo Pro]: 正式用户注册成功，已更新登录验证状态为true');
+              
+              res.done({
+                code: 0,
+                msg: '注册成功',
+                data: {
+                  token,
+                  username,
+                  avatar: newUser.avatar
+                }
+              });
             });
           });
         });
-      });
+      }
+      
+      // 确保系统设置存在的辅助函数
+      function ensureSystemSettings(callback) {
+        settingsDb.findOne({ type: 'system' }, (err, systemSettings) => {
+          if (err) {
+            return res.done({ code: 500, msg: '获取系统设置失败' });
+          }
+          
+          if (systemSettings && systemSettings.jwtSecret) {
+            // 使用现有的JWT密钥
+            global.jwtSecret = systemSettings.jwtSecret;
+            callback(systemSettings.jwtSecret);
+          } else {
+            // 生成新的JWT密钥
+            const jwtSecret = require('crypto').randomBytes(64).toString('hex');
+            global.jwtSecret = jwtSecret;
+            
+            const settingData = {
+              type: 'system',
+              jwtSecret: jwtSecret,
+              createdAt: new Date(),
+              updatedAt: new Date()
+            };
+            
+            if (systemSettings) {
+              // 更新现有设置
+              settingsDb.update({ type: 'system' }, { $set: settingData }, {}, (err) => {
+                if (err) {
+                  return res.done({ code: 500, msg: '更新系统设置失败' });
+                }
+                callback(jwtSecret);
+              });
+            } else {
+              // 创建新设置
+              settingsDb.insert(settingData, (err) => {
+                if (err) {
+                  return res.done({ code: 500, msg: '创建系统设置失败' });
+                }
+                callback(jwtSecret);
+              });
+            }
+          }
+        });
+      }
+    });
+  });
+
+  // 添加跳过设置API（用于首次使用时的免密登录）
+  use('settings/skip-setup', function(req, res) {
+    // 检查是否已有用户
+    userDb.count({}, (err, count) => {
+      if (err) {
+        return res.done({ code: 500, msg: '检查系统状态失败' });
+      }
+      
+      // 如果没有用户，创建临时用户
+      if (count === 0) {
+        createTemporaryUser();
+      } else {
+        // 如果有用户，检查是否存在临时用户
+        userDb.find({}, (err, users) => {
+          if (err) {
+            return res.done({ code: 500, msg: '检查系统状态失败' });
+          }
+          
+          const hasRealUser = users.some(user => !user.isTemporary);
+          const tempUser = users.find(user => user.isTemporary);
+          
+          if (hasRealUser) {
+            // 已有正式用户，不允许跳过设置
+            return res.done({ code: 403, msg: '系统已初始化，不能跳过设置' });
+          } else if (tempUser) {
+            // 存在临时用户，为其生成新token
+            generateTokenForUser(tempUser.username);
+          } else {
+            // 理论上不会到达这里，但为了安全起见，创建临时用户
+            createTemporaryUser();
+          }
+        });
+      }
+      
+      // 创建临时用户的函数
+      function createTemporaryUser() {
+        const tempUsername = 'temp_user_' + Date.now();
+        const tempUser = {
+          username: tempUsername,
+          password: null, // 没有密码，表示临时用户
+          avatar: '',
+          isTemporary: true, // 标记为临时用户
+          createdAt: new Date(),
+          updatedAt: new Date()
+        };
+        
+        userDb.insert(tempUser, (err) => {
+          if (err) {
+            return res.done({ code: 500, msg: '创建临时用户失败' });
+          }
+          
+          // 创建默认设置
+          const newSettings = {
+            username: tempUsername,
+            menuCollapsed: false,
+            createdAt: new Date(),
+            updatedAt: new Date()
+          };
+          
+          settingsDb.insert(newSettings, (err) => {
+            if (err) {
+              return res.done({ code: 500, msg: '创建设置失败' });
+            }
+            
+            ensureJwtSecretAndGenerateToken(tempUsername);
+          });
+        });
+      }
+      
+      // 为现有用户生成token的函数
+      function generateTokenForUser(username) {
+        ensureJwtSecretAndGenerateToken(username);
+      }
+      
+      // 确保JWT密钥存在并生成token的函数
+      function ensureJwtSecretAndGenerateToken(username) {
+        // 检查是否存在JWT密钥
+        settingsDb.findOne({ type: 'system' }, (err, systemSettings) => {
+          if (err) {
+            return res.done({ code: 500, msg: '获取系统设置失败' });
+          }
+          
+          let jwtSecret = systemSettings ? systemSettings.jwtSecret : null;
+          
+          if (!jwtSecret) {
+            // 创建JWT密钥
+            jwtSecret = require('crypto').randomBytes(64).toString('hex');
+            global.jwtSecret = jwtSecret;
+            
+            const settingData = {
+              type: 'system',
+              jwtSecret: jwtSecret,
+              createdAt: new Date(),
+              updatedAt: new Date()
+            };
+            
+            if (systemSettings) {
+              // 更新现有设置
+              settingsDb.update({ type: 'system' }, { $set: settingData }, {}, (err) => {
+                if (err) {
+                  return res.done({ code: 500, msg: '更新系统设置失败' });
+                }
+                generateAndReturnToken(username, jwtSecret);
+              });
+            } else {
+              // 创建新设置
+              settingsDb.insert(settingData, (err) => {
+                if (err) {
+                  return res.done({ code: 500, msg: '创建系统设置失败' });
+                }
+                generateAndReturnToken(username, jwtSecret);
+              });
+            }
+          } else {
+            // 使用现有的JWT密钥
+            global.jwtSecret = jwtSecret;
+            generateAndReturnToken(username, jwtSecret);
+          }
+        });
+      }
+      
+      // 生成并返回token的函数
+      function generateAndReturnToken(username, jwtSecret) {
+        const jwt = require('jsonwebtoken');
+        const token = jwt.sign({ username: username }, jwtSecret, { expiresIn: '30d' });
+        
+        // 暂时不更新全局的needLogin状态，保持为false以便后续可以设置正式账号
+        global.actualNeedLogin = false;
+        console.log('[Hexo Pro]: 用户选择跳过设置，使用临时账号:', username);
+        
+        res.done({
+          code: 0,
+          msg: '已跳过设置，可稍后在设置页面配置账号密码',
+          data: {
+            token,
+            username: username,
+            isTemporary: true
+          }
+        });
+      }
     });
   });
 
@@ -181,12 +446,12 @@ module.exports = function(app, hexo, use, db) {
   // 更新用户设置
   use('settings/update', function(req, res) {
     // 修改这里：使用 req.auth
-    let username = req.auth ? req.auth.username : null;
+    let currentUsername = req.auth ? req.auth.username : null;
     
     
 
     if (req.auth && req.auth.username) {
-      username = req.auth.username;
+      currentUsername = req.auth.username;
     } 
     // 如果req.auth不存在，尝试手动解析token
     else if (req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
@@ -199,8 +464,8 @@ module.exports = function(app, hexo, use, db) {
                 console.log('手动解析token结果:', decoded);
                 
                 if (decoded && decoded.username) {
-                    username = decoded.username;
-                    console.log('从token中获取到用户名:', username);
+                    currentUsername = decoded.username;
+                    console.log('从token中获取到用户名:', currentUsername);
                 }
             }
         } catch (error) {
@@ -208,89 +473,136 @@ module.exports = function(app, hexo, use, db) {
         }
     }
 
-    
+    if (!currentUsername) {
+      return res.done({ code: 401, msg: '未授权' });
+    }
 
-    const { avatar, password, confirmPassword, menuCollapsed } = req.body;
+    const { username: newUsername, avatar, password, confirmPassword, menuCollapsed } = req.body;
 
     // 验证密码
     if (password && password !== confirmPassword) {
       return res.done({ code: 400, msg: '两次输入的密码不一致' });
     }
 
-    // 更新用户信息
-    userDb.findOne({ username }, (err, user) => {
-      if (err || !user) {
-        return res.done({ code: 500, msg: '获取用户信息失败' });
-      }
-
-      const updateData = {};
-      
-      // 只更新提供的字段
-      if (avatar !== undefined) {
-        updateData.avatar = avatar;
-      }
-      
-      if (password) {
-        updateData.password = password;
-      }
-
-      updateData.updatedAt = new Date();
-
-      userDb.update({ username }, { $set: updateData }, { upsert: false }, (err) => {
+    // 检查新用户名是否与其他用户冲突（如果用户名发生了变化）
+    if (newUsername && newUsername !== currentUsername) {
+      userDb.findOne({ username: newUsername }, (err, existingUser) => {
         if (err) {
-          return res.done({ code: 500, msg: '更新用户信息失败' });
+          return res.done({ code: 500, msg: '检查用户名失败' });
+        }
+        
+        if (existingUser) {
+          return res.done({ code: 400, msg: '用户名已存在' });
+        }
+        
+        // 用户名不冲突，继续更新流程
+        proceedWithUpdate();
+      });
+    } else {
+      // 用户名没有变化，直接更新
+      proceedWithUpdate();
+    }
+
+    function proceedWithUpdate() {
+      // 更新用户信息
+      userDb.findOne({ username: currentUsername }, (err, user) => {
+        if (err || !user) {
+          return res.done({ code: 500, msg: '获取用户信息失败' });
         }
 
-        // 更新设置
-        settingsDb.findOne({ username }, (err, settings) => {
+        const updateData = {};
+        
+        // 只更新提供的字段
+        if (newUsername !== undefined && newUsername !== currentUsername) {
+          updateData.username = newUsername;
+        }
+        
+        if (avatar !== undefined) {
+          updateData.avatar = avatar;
+        }
+        
+        if (password) {
+          updateData.password = password;
+        }
+
+        updateData.updatedAt = new Date();
+
+        userDb.update({ username: currentUsername }, { $set: updateData }, { upsert: false }, (err) => {
           if (err) {
-            return res.done({ code: 500, msg: '获取设置失败' });
+            return res.done({ code: 500, msg: '更新用户信息失败' });
           }
 
-          if (settings) {
-            // 更新现有设置
-            settingsDb.update(
-              { username }, 
-              { $set: { menuCollapsed, updatedAt: new Date() } }, 
-              {}, 
-              (err) => {
-                if (err) {
-                  return res.done({ code: 500, msg: '更新设置失败' });
-                }
-                
-                // 如果更新了密码，同时更新配置文件
-                if (password) {
-                  updateConfigFile(username, password);
-                }
-                
-                res.done({ code: 0, msg: '设置已更新' });
-              }
-            );
-          } else {
-            // 创建新设置
-            const newSettings = {
-              username,
+          const finalUsername = newUsername || currentUsername;
+
+          // 更新设置
+          settingsDb.findOne({ username: currentUsername }, (err, settings) => {
+            if (err) {
+              return res.done({ code: 500, msg: '获取设置失败' });
+            }
+
+            const settingsUpdateData = {
+              username: finalUsername, // 如果用户名变了，也要更新设置中的用户名
               menuCollapsed,
-              createdAt: new Date(),
               updatedAt: new Date()
             };
-            
-            settingsDb.insert(newSettings, (err) => {
-              if (err) {
-                return res.done({ code: 500, msg: '创建设置失败' });
-              }
+
+            if (settings) {
+              // 更新现有设置
+              settingsDb.update(
+                { username: currentUsername }, 
+                { $set: settingsUpdateData }, 
+                {}, 
+                (err) => {
+                  if (err) {
+                    return res.done({ code: 500, msg: '更新设置失败' });
+                  }
+                  
+                  handlePostUpdateActions(finalUsername, password);
+                }
+              );
+            } else {
+              // 创建新设置
+              const newSettings = {
+                ...settingsUpdateData,
+                createdAt: new Date()
+              };
               
-              // 如果更新了密码，同时更新配置文件
-              if (password) {
-                updateConfigFile(username, password);
-              }
-              
-              res.done({ code: 0, msg: '设置已创建' });
-            });
-          }
+              settingsDb.insert(newSettings, (err) => {
+                if (err) {
+                  return res.done({ code: 500, msg: '创建设置失败' });
+                }
+                
+                handlePostUpdateActions(finalUsername, password);
+              });
+            }
+          });
         });
       });
-    });
+    }
+
+    function handlePostUpdateActions(finalUsername, password) {
+      // 如果更新了密码，同时更新配置文件
+      if (password) {
+        updateConfigFile(finalUsername, password);
+      }
+      
+      // 如果用户名发生了变化，需要生成新的token
+      if (newUsername && newUsername !== currentUsername) {
+        const jwt = require('jsonwebtoken');
+        const newToken = jwt.sign({ username: finalUsername }, global.jwtSecret, { expiresIn: '7d' });
+        
+        res.done({ 
+          code: 0, 
+          msg: '设置已更新',
+          data: {
+            token: newToken, // 返回新的token
+            username: finalUsername
+          }
+        });
+      } else {
+        res.done({ code: 0, msg: '设置已更新' });
+      }
+    }
   });
 
   // 上传头像

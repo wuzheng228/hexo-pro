@@ -166,6 +166,7 @@ module.exports = async function (app, hexo) { // 将导出函数改为 async
             `${apiBasePath}/login`,
             `${apiBasePath}/settings/check-first-use`,
             `${apiBasePath}/settings/register`,
+            `${apiBasePath}/settings/skip-setup`, // 添加跳过设置API到排除列表
             `${apiBasePath}/auth/status`, // 添加认证状态检查路径到排除列表
             `${apiBasePath}/desktop/status`, // 添加桌面端状态API到排除列表
             `${apiBasePath}/desktop/auth-check`, // 添加桌面端认证检查API到排除列表  
