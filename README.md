@@ -51,20 +51,12 @@ Hexo Pro为Hexo用户提供专业级内容管理体验，节省您90%的内容�
 
 本项目包含以下子模块：
 
-text
-
-Apply to README.md
-
-**parent-directory/**
-
 **├── hexo-pro/           # 本插件（后端核心）**
-
-**├── hexo-pro-client/    # 前端管理界面（React）**
 
 **└── hexo-pro-desktop/   # 桌面客户端（Electron）**
 
-* hexo-pro：Hexo 插件，提供 API 和服务端逻辑
 * hexo-pro-client：现代化 Web 管理界面
+* hexo-pro：Hexo 插件，提供 API 和服务端逻辑
 * hexo-pro-desktop：桌面客户端，集成 hexo-pro-core，支持多项目与本地增强体验
 
 ---
