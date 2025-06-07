@@ -1,8 +1,9 @@
 # Hexo Pro
 
-**![GitHub license](https://img.shields.io/github/license/wuzheng228/hexo-pro)**
-
-!**Version**
+[![GitHub license](https://img.shields.io/github/license/wuzheng228/hexo-pro)](https://github.com/wuzheng228/hexo-pro/blob/main/LICENSE)
+[![Version](https://img.shields.io/badge/version-1.3.0-blue)](https://github.com/wuzheng228/hexo-pro/releases)
+[![npm downloads](https://img.shields.io/npm/dm/hexo-pro)](https://www.npmjs.com/package/hexo-pro)
+[![GitHub stars](https://img.shields.io/github/stars/wuzheng228/hexo-pro)](https://github.com/wuzheng228/hexo-pro/stargazers)
 
 > 现代化 Hexo 博客后台管理系统，助力高效内容创作与管理
 
@@ -16,9 +17,9 @@ Hexo Pro 是专为 **Hexo** 静态博客框架打造的后台管理系统插件�
 
 Hexo Pro为Hexo用户提供专业级内容管理体验，节省您90%的内容维护时间！
 
-相关项目：* **Hexo Pro Client** - Hexo Pro 的前端实现，基于 React 开发的现代化管理界面
-
-* **Hexo Pro Desktop** - 基于 Electron 的桌面客户端，支持多项目管理与本地增强体验
+相关项目：
+- [Hexo Pro Client](https://github.com/wuzheng228/hexo-pro-client) - Hexo Pro 的前端实现，基于 React 开发的现代化管理界面
+- [Hexo Pro Desktop](https://github.com/wuzheng228/hexo-pro-desktop) - 基于 Electron 的桌面客户端，支持多项目管理与本地增强体验
 
 ---
 
@@ -51,13 +52,16 @@ Hexo Pro为Hexo用户提供专业级内容管理体验，节省您90%的内容�
 
 本项目包含以下子模块：
 
-**├── hexo-pro/           # 本插件（后端核心）**
+```
+parent-directory/
+├── hexo-pro/           # 本插件（后端核心）
+├── hexo-pro-client/    # 前端管理界面（React）
+└── hexo-pro-desktop/   # 桌面客户端（Electron）
+```
 
-**└── hexo-pro-desktop/   # 桌面客户端（Electron）**
-
-* hexo-pro-client：现代化 Web 管理界面
-* hexo-pro：Hexo 插件，提供 API 和服务端逻辑
-* hexo-pro-desktop：桌面客户端，集成 hexo-pro-core，支持多项目与本地增强体验
+* **hexo-pro**：Hexo 插件，提供 API 和服务端逻辑
+* **hexo-pro-client**：现代化 Web 管理界面
+* **hexo-pro-desktop**：桌面客户端，集成 hexo-pro-core，支持多项目与本地增强体验
 
 ---
 
@@ -72,25 +76,18 @@ Hexo Pro为Hexo用户提供专业级内容管理体验，节省您90%的内容�
 
 #### 安装步骤
 
-bash
+```bash
+# 1. 安装 Hexo Pro 插件
+npm install --save hexo-pro
 
-Apply to README.md
+# 2. 启动 Hexo 服务器
+hexo server -d
 
-Run
+# 3. 访问后台管理页面
+open http://localhost:4000/pro/
+```
 
-**# 1. 安装 Hexo Pro 插件**
-
-**npm **install** **--save** **hexo-pro
-
-**# 2. 启动 Hexo 服务器**
-
-**hexo **server** **-d
-
-**# 3. 访问后台管理页面**
-
-**open **http://localhost:4000/pro/
-
-### 2. 使用桌面客户端（推荐）
+### 2. 使用桌面客户端
 
 #### 系统要求
 
@@ -99,7 +96,7 @@ Run
 
 #### 安装与启动
 
-直接下载 **Releases** 预构建版本。
+直接下载 **[Releases](https://github.com/wuzheng228/hexo-pro/releases)** 预构建版本。
 
 #### 使用说明
 
@@ -191,3 +188,10 @@ MIT © wuzheng
 💬 提出宝贵建议
 
 您的支持会让Hexo生态更强大！
+
+## 📦 技术栈
+- **后端**：Node.js + Express
+- **数据库**：NeDB (嵌入式数据库)
+- **前端**：React (hexo-pro-client)
+- **桌面端**：Electron (hexo-pro-desktop)
+- **核心依赖**：Hexo 7.x, Fuse.js, Multer 等
