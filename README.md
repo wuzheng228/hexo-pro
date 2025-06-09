@@ -179,6 +179,30 @@ MIT © wuzheng
 
 ---
 
+## 🙏 感谢捐助者
+
+感谢以下用户对项目的支持，您的捐助是我们持续开发的动力！
+
+<div align="center">
+
+<table>
+<tr>
+<td align="center">
+<img src="docs/sponsors/sponsor_vk.jpg" width="60" height="60" style="border-radius: 50%;" alt="捐助者头像"><br>
+<sub><b>v快</b></sub>
+</td>
+<td align="center">
+<img src="docs/sponsors/sponsor_empty.jpg" width="60" height="60" style="border-radius: 50%;" alt="捐助者头像"><br>
+<sub><b>💝 神秘支持者</b></sub>
+</td>
+</table>
+
+</div>
+
+> 💝 想成为捐助者？扫描上方二维码支持项目，并联系我们添加您的头像！
+
+---
+
 如果本项目对您有帮助，欢迎：
 
 ⭐ 给个Star支持
