@@ -1,4 +1,4 @@
-const Datastore = require('nedb');
+const Datastore = require('@seald-io/nedb');
 const path = require('path');
 const fs = require('fs');
 // 添加 crypto 模块用于生成随机密钥
