@@ -181,7 +181,7 @@ MIT © wuzheng
 
 ## 🙏 感谢捐助者
 
-感谢以下用户对项目的支持，您的捐助是我们持续开发的动力！
+感谢以下用户对项目的支持,排名不分先后，您的捐助是我们持续开发的动力！
 
 <div align="center">
 
@@ -194,6 +194,10 @@ MIT © wuzheng
 <td align="center">
 <img src="docs/sponsors/sponsor_empty.jpg" width="60" height="60" style="border-radius: 50%;" alt="捐助者头像"><br>
 <sub><b>💝 神秘支持者</b></sub>
+</td>
+<td align="center">
+<img src="docs/sponsors/sponsor_crosery.png" width="60" height="60" style="border-radius: 50%;" alt="捐助者头像"><br>
+<sub><b>Crosery</b></sub>
 </td>
 </table>
 
