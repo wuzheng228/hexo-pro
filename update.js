@@ -77,7 +77,7 @@ module.exports = function (model, unimark, update, callback, hexo) {
     }
 
     delete update._content
-    var raw = hfm.stringify(compiled);
+    var raw = hfm.stringify(compiled, { prefixSeparator: true });
     update.raw = raw
     update.updated = moment()
     update.slug = slug
