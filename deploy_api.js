@@ -124,6 +124,9 @@ module.exports = function (app, hexo, use, db) {
                     return res.send(400, '缺少仓库地址');
                 }
 
+                // 获取跳过生成的设置
+                const skipGenerate = req.body && req.body.skipGenerate === true;
+
                 // 更新部署状态为进行中
                 deployStatusDb.update(
                     { type: 'status' },
@@ -151,7 +154,7 @@ module.exports = function (app, hexo, use, db) {
                         });
 
                         // 异步执行部署
-                        executeDeployAsync(hexo.base_dir, deployStatusDb, config);
+                        executeDeployAsync(hexo.base_dir, deployStatusDb, config, skipGenerate);
                     }
                 );
             });
@@ -272,7 +275,7 @@ module.exports = function (app, hexo, use, db) {
     }
 
     // 辅助函数：异步执行部署过程
-    function executeDeployAsync(baseDir, deployStatusDb, config) {
+    function executeDeployAsync(baseDir, deployStatusDb, config, skipGenerate) {
         const updateStatus = (update) => {
             return new Promise((resolve, reject) => {
                 deployStatusDb.update(
@@ -357,7 +360,7 @@ module.exports = function (app, hexo, use, db) {
         };
 
         // 自定义 Git 部署函数
-        const customGitDeploy = async (baseDir, config) => {
+        const customGitDeploy = async (baseDir, config, skipGenerate = false) => {
             const deployDir = path.join(baseDir, '.deploy_git');
             const publicDir = path.join(baseDir, 'public');
             
@@ -371,34 +374,23 @@ module.exports = function (app, hexo, use, db) {
 
             addLog('deploy.git.preparing');
 
-            // 检查 public 目录是否存在
-            if (!fs.existsSync(publicDir)) {
-                throw new Error('public 目录不存在，请先运行 hexo generate');
+            if (!skipGenerate) {
+                // 标准模式：检查 public 目录是否存在
+                if (!fs.existsSync(publicDir)) {
+                    throw new Error('public 目录不存在，请先运行 hexo generate');
+                }
             }
 
             // 初始化或更新 .deploy_git 目录
-            if (!fs.existsSync(deployDir)) {
-                addLog('deploy.git.cloning');
-                await runCommand('git', ['clone', repoUrl, '.deploy_git'], { cwd: baseDir });
-            } else {
-                addLog('deploy.git.updating');
-                
-                // 检查并设置 origin remote
-                try {
-                    // 检查 origin remote 是否存在
-                    await runCommand('git', ['remote', 'get-url', 'origin'], { cwd: deployDir });
-                } catch (error) {
-                    // origin 不存在，添加它
-                    addLog('deploy.git.adding.origin');
-                    await runCommand('git', ['remote', 'add', 'origin', repoUrl], { cwd: deployDir });
+            if (skipGenerate) {
+                // 跳过生成模式：重新初始化部署目录以避免历史记录中的敏感信息
+                if (fs.existsSync(deployDir)) {
+                    addLog('deploy.git.cleaning.old.deploy.dir');
+                    await fse.remove(deployDir);
                 }
                 
-                // 确保 origin URL 是正确的
-                try {
-                    await runCommand('git', ['remote', 'set-url', 'origin', repoUrl], { cwd: deployDir });
-                } catch (error) {
-                    addLog('deploy.git.remote.set.url.failed');
-                }
+                addLog('deploy.git.init.fresh.repo');
+                await runCommand('git', ['clone', '--depth', '1', repoUrl, '.deploy_git'], { cwd: baseDir });
                 
                 // 切换到指定分支
                 try {
@@ -408,12 +400,46 @@ module.exports = function (app, hexo, use, db) {
                     addLog(`deploy.git.creating.branch: ${config.branch || 'main'}`);
                     await runCommand('git', ['checkout', '-b', config.branch || 'main'], { cwd: deployDir });
                 }
-                
-                // 拉取最新更改
-                try {
-                    await runCommand('git', ['pull', 'origin', config.branch || 'main'], { cwd: deployDir });
-                } catch (error) {
-                    addLog('deploy.git.pull.failed.continuing');
+            } else {
+                // 标准模式：正常的git操作
+                if (!fs.existsSync(deployDir)) {
+                    addLog('deploy.git.cloning');
+                    await runCommand('git', ['clone', repoUrl, '.deploy_git'], { cwd: baseDir });
+                } else {
+                    addLog('deploy.git.updating');
+                    
+                    // 检查并设置 origin remote
+                    try {
+                        // 检查 origin remote 是否存在
+                        await runCommand('git', ['remote', 'get-url', 'origin'], { cwd: deployDir });
+                    } catch (error) {
+                        // origin 不存在，添加它
+                        addLog('deploy.git.adding.origin');
+                        await runCommand('git', ['remote', 'add', 'origin', repoUrl], { cwd: deployDir });
+                    }
+                    
+                    // 确保 origin URL 是正确的
+                    try {
+                        await runCommand('git', ['remote', 'set-url', 'origin', repoUrl], { cwd: deployDir });
+                    } catch (error) {
+                        addLog('deploy.git.remote.set.url.failed');
+                    }
+                    
+                    // 切换到指定分支
+                    try {
+                        await runCommand('git', ['checkout', config.branch || 'main'], { cwd: deployDir });
+                    } catch (error) {
+                        // 如果分支不存在，创建新分支
+                        addLog(`deploy.git.creating.branch: ${config.branch || 'main'}`);
+                        await runCommand('git', ['checkout', '-b', config.branch || 'main'], { cwd: deployDir });
+                    }
+                    
+                    // 拉取最新更改
+                    try {
+                        await runCommand('git', ['pull', 'origin', config.branch || 'main'], { cwd: deployDir });
+                    } catch (error) {
+                        addLog('deploy.git.pull.failed.continuing');
+                    }
                 }
             }
 
@@ -427,13 +453,78 @@ module.exports = function (app, hexo, use, db) {
                 }
             }
 
-            // 复制 public 目录内容到 deploy 目录
-            await fse.copy(publicDir, deployDir, {
-                filter: (src, dest) => {
-                    // 不复制 .git 目录
-                    return !src.includes('.git');
+            if (skipGenerate) {
+                // 跳过生成模式：复制源代码文件到 deploy 目录
+                const filesToCopy = [
+                    'source',
+                    'themes',
+                    'package.json',
+                    'scaffolds'
+                ];
+                
+                for (const item of filesToCopy) {
+                    const sourcePath = path.join(baseDir, item);
+                    const destPath = path.join(deployDir, item);
+                    
+                    if (fs.existsSync(sourcePath)) {
+                        await fse.copy(sourcePath, destPath, {
+                            filter: (src, dest) => {
+                                // 不复制 .git 目录和 node_modules
+                                return !src.includes('.git') && !src.includes('node_modules');
+                            }
+                        });
+                    }
                 }
-            });
+                
+                // 特殊处理 _config.yml，移除敏感信息
+                const configPath = path.join(baseDir, '_config.yml');
+                const deployConfigPath = path.join(deployDir, '_config.yml');
+                
+                if (fs.existsSync(configPath)) {
+                    try {
+                        // 读取原始配置
+                        const configContent = fse.readFileSync(configPath, 'utf-8');
+                        let configObj = yaml.load(configContent);
+                        
+                        // 清理 deploy 配置中的敏感信息
+                        if (configObj.deploy) {
+                            if (configObj.deploy.repo && typeof configObj.deploy.repo === 'string') {
+                                // 移除 repo URL 中的 token
+                                configObj.deploy.repo = configObj.deploy.repo.replace(/https:\/\/[^@]+@github\.com\//, 'https://github.com/');
+                            }
+                        }
+                        
+                        // 写入清理后的配置
+                        const cleanConfigContent = yaml.dump(configObj);
+                        fs.writeFileSync(deployConfigPath, cleanConfigContent, 'utf-8');
+                        
+                        addLog('deploy.git.config.cleaned');
+                    } catch (error) {
+                        console.error('处理 _config.yml 失败:', error);
+                        // 如果处理失败，直接复制原文件（可能会触发 GitHub 保护）
+                        await fse.copy(configPath, deployConfigPath);
+                    }
+                }
+                
+                // 复制其他可能存在的配置文件
+                const optionalFiles = ['_config.landscape.yml', '_config.next.yml', 'yarn.lock', 'package-lock.json'];
+                for (const file of optionalFiles) {
+                    const sourcePath = path.join(baseDir, file);
+                    const destPath = path.join(deployDir, file);
+                    
+                    if (fs.existsSync(sourcePath)) {
+                        await fse.copy(sourcePath, destPath);
+                    }
+                }
+            } else {
+                // 标准模式：复制 public 目录内容到 deploy 目录
+                await fse.copy(publicDir, deployDir, {
+                    filter: (src, dest) => {
+                        // 不复制 .git 目录
+                        return !src.includes('.git');
+                    }
+                });
+            }
 
             addLog('deploy.git.adding.files');
             
@@ -461,20 +552,28 @@ module.exports = function (app, hexo, use, db) {
         // 开始部署流程
         (async () => {
             try {
-                // 清理
-                await updateStatus({ stage: 'cleaning', progress: 10 });
-                addLog('deploy.cleaning');
-                await runCommand('npx', ['hexo', 'clean'], { cwd: baseDir });
+                if (skipGenerate) {
+                    // 跳过生成模式
+                    addLog('deploy.skip.generate.mode');
+                    
+                    await updateStatus({ stage: 'deploying', progress: 30 });
+                } else {
+                    // 标准模式：清理
+                    await updateStatus({ stage: 'cleaning', progress: 10 });
+                    addLog('deploy.cleaning');
+                    await runCommand('npx', ['hexo', 'clean'], { cwd: baseDir });
 
-                // 生成
-                await updateStatus({ stage: 'generating', progress: 30 });
-                addLog('deploy.generating');
-                await runCommand('npx', ['hexo', 'generate'], { cwd: baseDir });
+                    // 生成
+                    await updateStatus({ stage: 'generating', progress: 30 });
+                    addLog('deploy.generating');
+                    await runCommand('npx', ['hexo', 'generate'], { cwd: baseDir });
+                    
+                    await updateStatus({ stage: 'deploying', progress: 60 });
+                }
 
                 // 自定义 Git 部署
-                await updateStatus({ stage: 'deploying', progress: 60 });
                 addLog('deploy.deploying');
-                await customGitDeploy(baseDir, config);
+                await customGitDeploy(baseDir, config, skipGenerate);
 
                 // 完成
                 const now = new Date();
