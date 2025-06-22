@@ -1,11 +1,35 @@
-# Hexo Pro
+<div align='center'>
+    <img src="docs/head.png" alt="alt text" width="100%">
+    <h1>Hexo Pro</h1>
+</div>
+<div align="center">
+  <a href="https://github.com/wuzheng228/hexo-pro/stargazers">
+    <img src="https://img.shields.io/github/stars/wuzheng228/hexo-pro?style=flat&logo=github" alt="GitHub stars"/>
+  </a>
 
-[![GitHub license](https://img.shields.io/github/license/wuzheng228/hexo-pro)](https://github.com/wuzheng228/hexo-pro/blob/main/LICENSE)
-[![Version](https://img.shields.io/badge/version-1.3.0-blue)](https://github.com/wuzheng228/hexo-pro/releases)
-[![npm downloads](https://img.shields.io/npm/dm/hexo-pro)](https://www.npmjs.com/package/hexo-pro)
-[![GitHub stars](https://img.shields.io/github/stars/wuzheng228/hexo-pro)](https://github.com/wuzheng228/hexo-pro/stargazers)
+  <a href="https://github.com/wuzheng228/hexo-pro/blob/main/LICENSE">
+    <img src="https://img.shields.io/github/license/wuzheng228/hexo-pro" alt="GitHub license">
+  </a>
 
-> 现代化 Hexo 博客后台管理系统，助力高效内容创作与管理
+  <a href="https://github.com/wuzheng228/hexo-pro/releases">
+    <img src="https://img.shields.io/badge/version-1.3.0-blue" alt="Version">
+  </a>
+  
+  <a href="https://www.npmjs.com/package/hexo-pro">
+    <img src="https://img.shields.io/npm/dm/hexo-pro" alt="npm downloads">
+  </a>
+</div>
+
+<div align="center">
+
+[中文](./README.md) | [English](./README_en.md)
+
+</div>
+
+<div align="center">
+  <h3>🚀 现代化 Hexo 博客后台管理系统</h3>
+  <p><em>助力高效内容创作与管理</em></p>
+</div>
 
 ---
 
@@ -81,7 +105,7 @@ parent-directory/
 npm install --save hexo-pro
 
 # 2. 启动 Hexo 服务器
-hexo server -d
+hexo server
 
 # 3. 访问后台管理页面
 open http://localhost:4000/pro/
@@ -110,17 +134,17 @@ open http://localhost:4000/pro/
 
 <div align="center">
 
-**登录页** | **文章列表** | **编辑器**
-:---: | :---: | :---:
-<img src="docs/login-page.png" width="250"> | <img src="docs/posts-page.png" width="250"> | <img src="docs/editor-page.png" width="250">
+  **登录页** | **文章列表** | **编辑器**
+  :---: | :---: | :---:
+  <img src="docs/login-page.png" width="250"> | <img src="docs/posts-page.png" width="250"> | <img src="docs/editor-page.png" width="250">
 
-**主页** | **图床管理** | **配置管理**
-:---: | :---: | :---:
-<img src="docs/home-page.png" width="250"> | <img src="docs/image-manager-page.png" width="250"> | <img src="docs/config-manager-page.png" width="250">
+  **主页** | **图床管理** | **配置管理**
+  :---: | :---: | :---:
+  <img src="docs/home-page.png" width="250"> | <img src="docs/image-manager-page.png" width="250"> | <img src="docs/config-manager-page.png" width="250">
 
-**全局搜索** | **部署**
-:---: | :---:
-<img src="docs/global-search-page.png" width="250"> | <img src="docs/deploy-page.png" width="250">
+  **全局搜索** | **部署**
+  :---: | :---:
+  <img src="docs/global-search-page.png" width="250"> | <img src="docs/deploy-page.png" width="250">
 
 </div>
 
@@ -174,8 +198,9 @@ open http://localhost:4000/pro/
 * 提交 Pull Request 贡献代码
 * 加入 QQ 群交流：1009585669
 
-<img src="docs/qq-group.png" width="150">
-
+<div align="center">
+  <img src="docs/qq-group.png" width="150">
+</div>
 ---
 
 ## 📄 许可证
@@ -187,9 +212,10 @@ MIT © wuzheng
 ## ☕️ 打赏支持
 
 如果你觉得本项目不错，可以请我喝杯咖啡☕️，支持项目持续优化！
-
-<img src="docs/donate_alipay.jpg" width="150" alt="打赏二维码">
-<img src="docs/donate_wc.jpg" width="150" alt="打赏二维码">
+<div align = "center">
+  <img src="docs/donate_alipay.jpg" width="150" alt="打赏二维码">
+  <img src="docs/donate_wc.jpg" width="150" alt="打赏二维码">
+</div>
 
 ---
 
@@ -198,24 +224,27 @@ MIT © wuzheng
 感谢以下用户对项目的支持,排名不分先后，您的捐助是我们持续开发的动力！
 
 <div align="center">
-
-<table>
-<tr>
-<td align="center">
-<img src="docs/sponsors/sponsor_vk.jpg" width="60" height="60" style="border-radius: 50%;" alt="捐助者头像"><br>
-<sub><b>v快</b></sub>
-</td>
-<td align="center">
-<img src="docs/sponsors/sponsor_empty.jpg" width="60" height="60" style="border-radius: 50%;" alt="捐助者头像"><br>
-<sub><b>💝 神秘支持者</b></sub>
-</td>
-<td align="center">
-<img src="docs/sponsors/sponsor_crosery.png" width="60" height="60" style="border-radius: 50%;" alt="捐助者头像"><br>
-<sub><b>Crosery</b></sub>
-</td>
-</table>
-
+  <table>
+    <tr>
+      <!-- 捐助者 v快 -->
+      <td align="center">
+        <img src="docs/sponsors/sponsor_vk.jpg" width="60" height="60" style="border-radius: 50%;" alt="捐助者头像"><br>
+        <sub><b>v快</b></sub>
+      </td>
+      <!-- 捐助者 神秘支持者 -->
+      <td align="center">
+        <img src="docs/sponsors/sponsor_empty.jpg" width="60" height="60" style="border-radius: 50%;" alt="捐助者头像"><br>
+        <sub><b>💝 神秘支持者</b></sub>
+      </td>
+      <!-- 捐助者 Crosery -->
+      <td align="center">
+        <img src="docs/sponsors/sponsor_crosery.png" width="60" height="60" style="border-radius: 50%;" alt="捐助者头像"><br>
+        <sub><b>Crosery</b></sub>
+      </td>
+    </tr>
+  </table>
 </div>
+
 
 > 💝 想成为捐助者？扫描上方二维码支持项目，并联系我们添加您的头像！
 
