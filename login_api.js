@@ -28,7 +28,7 @@ module.exports = function (app, hexo, use, db) {
             if (!user || user.password.toString() !== password) {
                 return res.done({
                     code: -1,
-                    msg: '用户名或密码错误'
+                    msg: 'login.form.login.errMsg'
                 });
             }
 
