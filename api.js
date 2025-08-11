@@ -15,15 +15,15 @@ const databaseManager = require('./database-manager'); // 导入数据库管理�
 
 // Helper function to promisify NeDB methods
 function promisifyNeDB(db, method, ...args) {
-  return new Promise((resolve, reject) => {
-    db[method](...args, (err, result) => {
-      if (err) {
-        reject(err);
-      } else {
-        resolve(result);
-      }
+    return new Promise((resolve, reject) => {
+        db[method](...args, (err, result) => {
+            if (err) {
+                reject(err);
+            } else {
+                resolve(result);
+            }
+        });
     });
-  });
 }
 
 module.exports = async function (app, hexo) { // 将导出函数改为 async
@@ -40,12 +40,12 @@ module.exports = async function (app, hexo) { // 将导出函数改为 async
                 paramNames.push(paramName);
                 return '([^/]+)';
             });
-            
+
             // 创建正则表达式对象
             const rootPrefix = hexo.config.root || '/'; // 处理 root 可能为空或 / 的情况
             const apiBasePath = `${rootPrefix}hexopro/api/`.replace('//', '/'); // 确保只有一个斜杠
             const pathRegex = new RegExp('^' + apiBasePath + regexPath + '$');
-            
+
             app.use(function (req, res, next) {
                 // 检查请求路径是否匹配正则表达式
                 const match = req.url.split('?')[0].match(pathRegex);
@@ -55,7 +55,7 @@ module.exports = async function (app, hexo) { // 将导出函数改为 async
                     for (let i = 0; i < paramNames.length; i++) {
                         req.params[paramNames[i]] = match[i + 1];
                     }
-                    
+
                     // 设置 done 和 send 方法
                     var done = function (val) {
                         if (!val) {
@@ -70,7 +70,7 @@ module.exports = async function (app, hexo) { // 将导出函数改为 async
                         res.statusCode = num
                         res.end(data)
                     }
-                    
+
                     // 调用处理函数
                     fn(req, res, next);
                 } else {
@@ -83,15 +83,15 @@ module.exports = async function (app, hexo) { // 将导出函数改为 async
             const rootPrefix = hexo.config.root || '/'; // 处理 root 可能为空或 / 的情况
             const apiBasePath = `${rootPrefix}hexopro/api/`.replace('//', '/'); // 确保只有一个斜杠
             const exactPath = apiBasePath + path;
-            
+
             app.use(exactPath, function (req, res, next) {
                 // 确保路径完全匹配，避免子路径被拦截
                 // 修改这里的逻辑以正确处理根路径和查询参数
                 const requestPath = req.originalUrl.split('?')[0];
                 if (requestPath !== exactPath) {
-                     return next();
+                    return next();
                 }
-                
+
                 var done = function (val) {
                     if (!val) {
                         res.statusCode = 204
@@ -109,7 +109,7 @@ module.exports = async function (app, hexo) { // 将导出函数改为 async
             })
         }
     }
-    
+
     // 将actualNeedLogin和jwtSecret设为全局变量，以便其他模块可以访问
     global.actualNeedLogin = false;
     global.jwtSecret = null;
@@ -179,7 +179,7 @@ module.exports = async function (app, hexo) { // 将导出函数改为 async
             console.log('排除的路径:', unlessPaths);
 
             if (!global.jwtSecret) {
-                 // 理论上不应该发生，因为上面已经处理了生成逻辑
+                // 理论上不应该发生，因为上面已经处理了生成逻辑
                 console.error('[Hexo Pro API]: 严重错误 - JWT Secret 未能生成或加载!');
                 global.jwtSecret = crypto.randomBytes(64).toString('hex'); // 再次尝试生成以防万一
             }
@@ -191,14 +191,14 @@ module.exports = async function (app, hexo) { // 将导出函数改为 async
                 requestProperty: 'auth' // 确保将解码后的token信息存储在req.auth中
             }).unless({ path: unlessPaths })); // 排除特定路径
         } else {
-             console.log('[Hexo Pro API]: 未启用JWT验证');
+            console.log('[Hexo Pro API]: 未启用JWT验证');
         }
 
         // 注册所有 API 路由
         login_api(app, hexo, use, db); // 移除不再需要的参数
         post_api(app, hexo, use);
         page_api(app, hexo, use);
-        image_api(app, hexo, use); // 注册图片API
+        image_api(app, hexo, use, db); // 注册图片API并传入数据库实例以持久化图床配置
         yaml_api(app, hexo, use);
         dashboard_api(app, hexo, use); // 注册仪表盘API
         deploy_api(app, hexo, use, db); // 传递数据库实例到部署API

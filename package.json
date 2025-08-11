@@ -21,6 +21,7 @@
   "homepage": "https://github.com/wuzheng228/hexo-pro#readme",
   "dependencies": {
     "@seald-io/nedb": "^4.1.1",
+    "ali-oss": "^6.23.0",
     "axios": "^1.9.0",
     "bcrypt-nodejs": "^0.0.3",
     "body-parser": "^1.20.2",
@@ -28,6 +29,7 @@
     "cheerio": "^1.0.0",
     "circular-json": "^0.5.9",
     "connect-history-api-fallback": "^2.0.0",
+    "cos-nodejs-sdk-v5": "^2.15.4",
     "express-jwt": "^8.4.1",
     "extend": "^3.0.2",
     "flatted": "^3.2.7",

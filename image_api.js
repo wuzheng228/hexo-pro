@@ -42,36 +42,104 @@ function getStorageConfig() {
     return config;
 }
 
-module.exports = function (app, hexo, use) {
+module.exports = function (app, hexo, use, db) {
+    const settingsDb = db && db.settingsDb;
 
-    // 设置图床配置API
+    // 从数据库加载图床配置到全局缓存
+    const loadStorageConfigFromDb = () => {
+        if (!settingsDb) return;
+        settingsDb.findOne({ type: 'storage' }, (err, doc) => {
+            if (err) {
+                console.error('[Image API] 读取图床配置失败:', err);
+                return;
+            }
+            if (doc && doc.storageConfig) {
+                global.hexoProStorageConfig = doc.storageConfig;
+                console.log('[Image API] 已从数据库加载图床配置:', global.hexoProStorageConfig);
+            }
+        });
+    };
+
+    const saveStorageConfigToDb = (config, cb) => {
+        if (!settingsDb) return cb && cb();
+        settingsDb.findOne({ type: 'storage' }, (findErr, doc) => {
+            if (findErr) {
+                console.error('[Image API] 查询图床配置失败:', findErr);
+                return cb && cb(findErr);
+            }
+            const now = new Date();
+            if (!doc) {
+                const toInsert = {
+                    type: 'storage',
+                    storageConfig: config,
+                    createdAt: now,
+                    updatedAt: now
+                };
+                settingsDb.insert(toInsert, (insErr) => {
+                    if (insErr) console.error('[Image API] 新建图床配置失败:', insErr);
+                    cb && cb(insErr);
+                });
+            } else {
+                settingsDb.update(
+                    { type: 'storage' },
+                    { $set: { storageConfig: config, updatedAt: now } },
+                    {},
+                    (updErr) => {
+                        if (updErr) console.error('[Image API] 更新图床配置失败:', updErr);
+                        cb && cb(updErr);
+                    }
+                );
+            }
+        });
+    };
+
+    // 初始化时尝试加载一次
+    loadStorageConfigFromDb();
+
+    // 设置图床配置API（持久化到 settings.db）
     use('images/config/set', function (req, res) {
         const { storageType, customPath, aliyunConfig, qiniuConfig, tencentConfig } = req.body;
 
-        // 更新全局配置
-        global.hexoProStorageConfig = {
-            type: storageType || 'local',
+        // 规范化配置
+        const nextConfig = {
+            type: (storageType || 'local'),
             customPath: customPath || 'images',
             aliyun: aliyunConfig || {},
             qiniu: qiniuConfig || {},
             tencent: tencentConfig || {}
         };
 
-        console.log('[Image API] 图床配置已更新:', global.hexoProStorageConfig);
+        // 更新全局缓存
+        global.hexoProStorageConfig = nextConfig;
 
-        res.done({
-            code: 0,
-            msg: '图床配置已保存',
-            data: global.hexoProStorageConfig
+        // 持久化
+        saveStorageConfigToDb(nextConfig, (err) => {
+            if (err) {
+                return res.done({ code: 500, msg: '保存图床配置失败' });
+            }
+            console.log('[Image API] 图床配置已更新并保存到数据库');
+            res.done({
+                code: 0,
+                msg: '图床配置已保存',
+                data: nextConfig
+            });
         });
     });
 
-    // 获取图床配置API
+    // 获取图床配置API（优先读数据库）
     use('images/config/get', function (req, res) {
-        const config = getStorageConfig();
-        res.done({
-            code: 0,
-            data: config
+        if (!settingsDb) {
+            return res.done({ code: 0, data: getStorageConfig() });
+        }
+        settingsDb.findOne({ type: 'storage' }, (err, doc) => {
+            if (err) {
+                console.error('[Image API] 读取图床配置失败:', err);
+                return res.done({ code: 0, data: getStorageConfig() });
+            }
+            const cfg = (doc && doc.storageConfig) ? doc.storageConfig : getStorageConfig();
+            // 同步到全局缓存
+            global.hexoProStorageConfig = cfg;
+            res.done({ code: 0, data: cfg });
         });
     });
 
@@ -94,74 +162,135 @@ module.exports = function (app, hexo, use) {
     // 创建multer上传实例
     const upload = multer({ storage: storage });
 
-    // 获取图片列表
-    use('images/list', function (req, res) {
+    // 获取图片列表（支持本地/阿里云/七牛云/腾讯云）
+    use('images/list', async function (req, res) {
         const page = parseInt(req.query.page) || 1;
         const pageSize = parseInt(req.query.pageSize) || 10;
         const folder = req.query.folder || '';
-
-        // 获取配置中的路径
         const config = getStorageConfig();
-        const imagesDir = path.join(hexo.source_dir, config.customPath);
-        const targetDir = folder ? path.join(imagesDir, folder) : imagesDir;
+        const type = ((req.query.storageType || config.type) || 'local').toLowerCase();
 
-        // 确保目录存在
-        fs.ensureDirSync(targetDir);
-
-        // 获取所有文件夹
-        const folders = [];
         try {
-            const items = fs.readdirSync(imagesDir);
-            items.forEach(item => {
-                const itemPath = path.join(imagesDir, item);
-                if (fs.statSync(itemPath).isDirectory()) {
-                    folders.push(item);
-                }
-            });
-        } catch (err) {
-            console.error('读取文件夹失败:', err);
-        }
+            if (type === 'local') {
+                const imagesDir = path.join(hexo.source_dir, config.customPath);
+                const targetDir = folder ? path.join(imagesDir, folder) : imagesDir;
 
-        // 获取当前文件夹下的所有图片
-        let images = [];
-        try {
-            const items = fs.readdirSync(targetDir);
-            items.forEach(item => {
-                const itemPath = path.join(targetDir, item);
-                const stat = fs.statSync(itemPath);
-                if (stat.isFile() && /\.(jpg|jpeg|png|gif|webp|svg)$/i.test(item)) {
-                    const relativePath = folder ? `${config.customPath}/${folder}/${item}` : `${config.customPath}/${item}`;
-                    images.push({
-                        name: item,
-                        path: `/${relativePath}`,
-                        url: `${hexo.config.url}/${relativePath}`,
-                        size: stat.size,
-                        lastModified: stat.mtime
+                fs.ensureDirSync(imagesDir);
+                fs.ensureDirSync(targetDir);
+
+                const folders = [];
+                try {
+                    const items = fs.readdirSync(imagesDir);
+                    items.forEach(item => {
+                        const itemPath = path.join(imagesDir, item);
+                        if (fs.statSync(itemPath).isDirectory()) {
+                            folders.push(item);
+                        }
                     });
+                } catch (_) { }
+
+                let images = [];
+                try {
+                    const items = fs.readdirSync(targetDir);
+                    items.forEach(item => {
+                        const itemPath = path.join(targetDir, item);
+                        const stat = fs.statSync(itemPath);
+                        if (stat.isFile() && /\.(jpg|jpeg|png|gif|webp|svg)$/i.test(item)) {
+                            const relativePath = folder ? `${config.customPath}/${folder}/${item}` : `${config.customPath}/${item}`;
+                            images.push({
+                                name: item,
+                                path: `/${relativePath}`,
+                                url: `${hexo.config.url}/${relativePath}`,
+                                size: stat.size,
+                                lastModified: stat.mtime
+                            });
+                        }
+                    });
+                } catch (_) { }
+
+                images.sort((a, b) => b.lastModified - a.lastModified);
+                const total = images.length;
+                const startIndex = (page - 1) * pageSize;
+                const endIndex = startIndex + pageSize;
+                const paginatedImages = images.slice(startIndex, endIndex);
+
+                return res.done({
+                    images: paginatedImages,
+                    folders: folders,
+                    total: total,
+                    page: page,
+                    pageSize: pageSize
+                });
+            }
+
+            // 远程对象存储统一列举
+            const allObjects = await listRemoteObjects(type, config);
+            const imageObjects = allObjects.filter(obj => /\.(jpg|jpeg|png|gif|webp|svg)$/i.test(obj.key));
+
+            const folderSet = new Set();
+            const images = [];
+            const now = Date.now();
+
+            imageObjects.forEach(obj => {
+                const key = obj.key;
+                if (folder) {
+                    if (!key.startsWith(folder + '/')) return;
+                    const remaining = key.slice(folder.length + 1);
+                    if (remaining.includes('/')) {
+                        const sub = remaining.split('/')[0];
+                        if (sub) folderSet.add(sub);
+                    } else {
+                        const url = buildObjectUrl(type, key, config);
+                        images.push({
+                            name: path.basename(key),
+                            path: url,
+                            url: url,
+                            size: Number(obj.size || 0),
+                            lastModified: obj.lastModified ? new Date(obj.lastModified) : new Date(now)
+                        });
+                    }
+                } else {
+                    if (key.includes('/')) {
+                        const top = key.split('/')[0];
+                        if (top) folderSet.add(top);
+                    } else {
+                        const url = buildObjectUrl(type, key, config);
+                        images.push({
+                            name: path.basename(key),
+                            path: url,
+                            url: url,
+                            size: Number(obj.size || 0),
+                            lastModified: obj.lastModified ? new Date(obj.lastModified) : new Date(now)
+                        });
+                    }
                 }
             });
+
+            images.sort((a, b) => b.lastModified - a.lastModified);
+            const total = images.length;
+            const startIndex = (page - 1) * pageSize;
+            const endIndex = startIndex + pageSize;
+            const paginatedImages = images.slice(startIndex, endIndex);
+
+            return res.done({
+                images: paginatedImages,
+                folders: Array.from(folderSet),
+                total: total,
+                page: page,
+                pageSize: pageSize
+            });
         } catch (err) {
-            console.error('读取图片失败:', err);
+            console.error('读取图片列表失败:', err);
+            return res.send(500, '读取图片列表失败: ' + err.message);
         }
-
-        // 排序和分页
-        images.sort((a, b) => b.lastModified - a.lastModified);
-        const total = images.length;
-        const startIndex = (page - 1) * pageSize;
-        const endIndex = startIndex + pageSize;
-        const paginatedImages = images.slice(startIndex, endIndex);
-
-        res.done({
-            images: paginatedImages,
-            folders: folders,
-            total: total,
-            page: page,
-            pageSize: pageSize
-        });
     });
 
     // 创建文件夹
     use('images/createFolder', function (req, res) {
+        const configType = (getStorageConfig().type || 'local').toLowerCase();
+        if (configType !== 'local') {
+            return res.send(400, '当前存储类型不支持新建文件夹');
+        }
         const folderName = req.body.folderName;
         if (!folderName) {
             return res.send(400, '文件夹名称不能为空');
@@ -191,6 +320,10 @@ module.exports = function (app, hexo, use) {
 
     // 删除图片
     use('images/delete', function (req, res) {
+        const configType = (getStorageConfig().type || 'local').toLowerCase();
+        if (configType !== 'local') {
+            return res.send(400, '当前存储类型不支持删除操作');
+        }
         const imagePath = req.body.path;
         if (!imagePath) {
             return res.send(400, '图片路径不能为空');
@@ -214,19 +347,20 @@ module.exports = function (app, hexo, use) {
     // 上传图片 - 修改为支持表单数据上传和第三方图床
     use('images/upload', function (req, res, next) {
         const config = getStorageConfig();
+        const reqType = ((req.body && req.body.storageType) || req.query.storageType || config.type || 'local').toLowerCase();
 
-        // 根据配置的存储类型处理上传
-        if (config.type === 'local') {
+        // 根据请求或配置的存储类型处理上传
+        if (reqType === 'local') {
             handleLocalUpload(req, res, next, config);
-        } else if (config.type === 'aliyun' && aliOSS) {
+        } else if (reqType === 'aliyun' && aliOSS) {
             handleAliyunUpload(req, res, config);
-        } else if (config.type === 'qiniu' && qiniuSDK) {
+        } else if (reqType === 'qiniu' && qiniuSDK) {
             handleQiniuUpload(req, res, config);
-        } else if (config.type === 'tencent' && tencentCOS) {
+        } else if (reqType === 'tencent' && tencentCOS) {
             handleTencentUpload(req, res, config);
         } else {
             // 如果第三方SDK未安装或配置不正确，回退到本地存储
-            console.log(`[Image API] ${config.type} SDK未安装或配置不正确，回退到本地存储`);
+            console.log(`[Image API] ${reqType} SDK未安装或配置不正确，回退到本地存储`);
             handleLocalUpload(req, res, next, config);
         }
     });
@@ -376,6 +510,10 @@ module.exports = function (app, hexo, use) {
 
     // 重命名图片
     use('images/rename', function (req, res) {
+        const configType = (getStorageConfig().type || 'local').toLowerCase();
+        if (configType !== 'local') {
+            return res.send(400, '当前存储类型不支持重命名操作');
+        }
         const oldPath = req.body.oldPath;
         const newName = req.body.newName;
 
@@ -430,6 +568,12 @@ module.exports = function (app, hexo, use) {
             return res.send(400, '图片路径不能为空');
         }
 
+        // 仅本地存储支持移动
+        const config = getStorageConfig();
+        if ((config.type || 'local') !== 'local') {
+            return res.send(400, '当前存储类型不支持移动操作');
+        }
+
         const fullPath = path.join(hexo.source_dir, imagePath);
 
         if (!fs.existsSync(fullPath)) {
@@ -438,8 +582,8 @@ module.exports = function (app, hexo, use) {
 
         const fileName = path.basename(fullPath);
         const targetDir = targetFolder
-            ? path.join(hexo.source_dir, 'images', targetFolder)
-            : path.join(hexo.source_dir, 'images');
+            ? path.join(hexo.source_dir, config.customPath, targetFolder)
+            : path.join(hexo.source_dir, config.customPath);
 
         // 确保目标目录存在
         fs.ensureDirSync(targetDir);
@@ -721,5 +865,102 @@ module.exports = function (app, hexo, use) {
                 src: url
             });
         });
+    }
+
+    // 工具函数：列举远程对象
+    async function listRemoteObjects(type, config) {
+        if (type === 'aliyun' && aliOSS) {
+            const { region, bucket, accessKeyId, accessKeySecret } = config.aliyun || {};
+            if (!region || !bucket || !accessKeyId || !accessKeySecret) return [];
+            const client = new aliOSS({ region, accessKeyId, accessKeySecret, bucket });
+            const objects = [];
+            let continuationToken = undefined;
+            do {
+                const result = await client.listV2({ 'max-keys': 1000, 'continuation-token': continuationToken });
+                if (result && Array.isArray(result.objects)) {
+                    for (const obj of result.objects) {
+                        objects.push({ key: obj.name, size: obj.size, lastModified: obj.lastModified });
+                    }
+                }
+                continuationToken = result && result.nextContinuationToken ? result.nextContinuationToken : undefined;
+            } while (continuationToken);
+            return objects;
+        }
+
+        if (type === 'qiniu' && qiniuSDK) {
+            const { bucket, accessKey, secretKey, region } = config.qiniu || {};
+            if (!bucket || !accessKey || !secretKey) return [];
+            const mac = new qiniuSDK.auth.digest.Mac(accessKey, secretKey);
+            const qnConfig = new qiniuSDK.conf.Config();
+            if (region && qiniuSDK.zone[region]) {
+                qnConfig.zone = qiniuSDK.zone[region];
+            }
+            const bucketManager = new qiniuSDK.rs.BucketManager(mac, qnConfig);
+            const objects = [];
+            let options = { limit: 1000 };
+            let marker = null;
+            do {
+                if (marker) options.marker = marker;
+                const page = await new Promise((resolve, reject) => {
+                    bucketManager.listPrefix(bucket, options, function (err, respBody, respInfo) {
+                        if (err) return reject(err);
+                        if (respInfo.statusCode === 200) {
+                            resolve({ items: respBody.items || [], marker: respBody.marker });
+                        } else {
+                            reject(new Error('Qiniu list error: ' + respInfo.statusCode));
+                        }
+                    });
+                });
+                for (const item of page.items) {
+                    objects.push({ key: item.key, size: item.fsize, lastModified: item.putTime ? new Date(item.putTime / 10000) : undefined });
+                }
+                marker = page.marker;
+            } while (marker);
+            return objects;
+        }
+
+        if (type === 'tencent' && tencentCOS) {
+            const { region, bucket, secretId, secretKey } = config.tencent || {};
+            if (!region || !bucket || !secretId || !secretKey) return [];
+            const cos = new tencentCOS({ SecretId: secretId, SecretKey: secretKey });
+            const objects = [];
+            let continuationToken = undefined;
+            do {
+                const resp = await new Promise((resolve, reject) => {
+                    cos.getBucket({ Bucket: bucket, Region: region, MaxKeys: 1000, ContinuationToken: continuationToken }, function (err, data) {
+                        if (err) return reject(err);
+                        resolve(data);
+                    });
+                });
+                if (resp && Array.isArray(resp.Contents)) {
+                    for (const item of resp.Contents) {
+                        objects.push({ key: item.Key, size: item.Size, lastModified: item.LastModified });
+                    }
+                }
+                continuationToken = (resp && resp.IsTruncated && resp.NextContinuationToken) ? resp.NextContinuationToken : undefined;
+            } while (continuationToken);
+            return objects;
+        }
+
+        return [];
+    }
+
+    function buildObjectUrl(type, key, config) {
+        if (type === 'aliyun') {
+            const { region, bucket, domain } = config.aliyun || {};
+            if (domain) return `${domain.replace(/\/$/, '')}/${encodeURI(key)}`;
+            if (region && bucket) return `https://${bucket}.oss-${region}.aliyuncs.com/${encodeURI(key)}`;
+            return `/${encodeURI(key)}`;
+        } else if (type === 'qiniu') {
+            const { domain } = config.qiniu || {};
+            if (domain) return `${domain.replace(/\/$/, '')}/${encodeURI(key)}`;
+            return `/${encodeURI(key)}`;
+        } else if (type === 'tencent') {
+            const { region, bucket, domain } = config.tencent || {};
+            if (domain) return `${domain.replace(/\/$/, '')}/${encodeURI(key)}`;
+            if (region && bucket) return `https://${bucket}.cos.${region}.myqcloud.com/${encodeURI(key)}`;
+            return `/${encodeURI(key)}`;
+        }
+        return `/${encodeURI(key)}`;
     }
 };
