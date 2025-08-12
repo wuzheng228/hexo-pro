@@ -62,13 +62,27 @@ module.exports = async function (app, hexo) { // 将导出函数改为 async
                             res.statusCode = 204
                             return res.end('');
                         }
-                        res.setHeader('Content-type', 'application/json')
+                        res.setHeader('Content-type', 'application/json; charset=utf-8')
                         res.end(CircularJSON.stringify(val))
                     }
                     res.done = done
                     res.send = function (num, data) {
                         res.statusCode = num
-                        res.end(data)
+                        if (data === undefined || data === null) {
+                            res.setHeader('Content-type', 'application/json; charset=utf-8')
+                            return res.end(JSON.stringify({ code: num }))
+                        }
+                        if (typeof data === 'string') {
+                            res.setHeader('Content-type', 'application/json; charset=utf-8')
+                            return res.end(JSON.stringify({ code: num, msg: data }))
+                        }
+                        if (Buffer.isBuffer(data)) {
+                            res.setHeader('Content-type', 'application/octet-stream')
+                            return res.end(data)
+                        }
+                        // object or other types -> JSON
+                        res.setHeader('Content-type', 'application/json; charset=utf-8')
+                        return res.end(CircularJSON.stringify(data))
                     }
 
                     // 调用处理函数
@@ -97,13 +111,26 @@ module.exports = async function (app, hexo) { // 将导出函数改为 async
                         res.statusCode = 204
                         return res.end('');
                     }
-                    res.setHeader('Content-type', 'application/json')
+                    res.setHeader('Content-type', 'application/json; charset=utf-8')
                     res.end(CircularJSON.stringify(val))
                 }
                 res.done = done
                 res.send = function (num, data) {
                     res.statusCode = num
-                    res.end(data)
+                    if (data === undefined || data === null) {
+                        res.setHeader('Content-type', 'application/json; charset=utf-8')
+                        return res.end(JSON.stringify({ code: num }))
+                    }
+                    if (typeof data === 'string') {
+                        res.setHeader('Content-type', 'application/json; charset=utf-8')
+                        return res.end(JSON.stringify({ code: num, msg: data }))
+                    }
+                    if (Buffer.isBuffer(data)) {
+                        res.setHeader('Content-type', 'application/octet-stream')
+                        return res.end(data)
+                    }
+                    res.setHeader('Content-type', 'application/json; charset=utf-8')
+                    return res.end(CircularJSON.stringify(data))
                 }
                 fn(req, res, next)
             })

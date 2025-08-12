@@ -231,40 +231,60 @@ module.exports = function (app, hexo, use, db) {
             const images = [];
             const now = Date.now();
 
-            imageObjects.forEach(obj => {
-                const key = obj.key;
-                if (folder) {
+            if (folder) {
+                // 推导当前 folder 下的子文件夹（基于全部对象，保证空文件夹也可见）
+                allObjects.forEach(obj => {
+                    const key = obj.key;
                     if (!key.startsWith(folder + '/')) return;
                     const remaining = key.slice(folder.length + 1);
                     if (remaining.includes('/')) {
                         const sub = remaining.split('/')[0];
                         if (sub) folderSet.add(sub);
-                    } else {
+                    }
+                });
+
+                // 当前文件夹内的图片
+                imageObjects.forEach(obj => {
+                    const key = obj.key;
+                    if (!key.startsWith(folder + '/')) return;
+                    const remaining = key.slice(folder.length + 1);
+                    if (!remaining.includes('/')) {
                         const url = buildObjectUrl(type, key, config);
                         images.push({
                             name: path.basename(key),
-                            path: url,
+                            // 远程 path 使用对象 Key，供后续操作（移动等）
+                            path: key,
                             url: url,
                             size: Number(obj.size || 0),
                             lastModified: obj.lastModified ? new Date(obj.lastModified) : new Date(now)
                         });
                     }
-                } else {
+                });
+            } else {
+                // 顶层文件夹集合（基于全部对象，保证空文件夹也可见）
+                allObjects.forEach(obj => {
+                    const key = obj.key;
                     if (key.includes('/')) {
                         const top = key.split('/')[0];
                         if (top) folderSet.add(top);
-                    } else {
+                    }
+                });
+
+                // 顶层图片
+                imageObjects.forEach(obj => {
+                    const key = obj.key;
+                    if (!key.includes('/')) {
                         const url = buildObjectUrl(type, key, config);
                         images.push({
                             name: path.basename(key),
-                            path: url,
+                            path: key,
                             url: url,
                             size: Number(obj.size || 0),
                             lastModified: obj.lastModified ? new Date(obj.lastModified) : new Date(now)
                         });
                     }
-                }
-            });
+                });
+            }
 
             images.sort((a, b) => b.lastModified - a.lastModified);
             const total = images.length;
@@ -285,62 +305,145 @@ module.exports = function (app, hexo, use, db) {
         }
     });
 
-    // 创建文件夹
-    use('images/createFolder', function (req, res) {
-        const configType = (getStorageConfig().type || 'local').toLowerCase();
-        if (configType !== 'local') {
-            return res.send(400, '当前存储类型不支持新建文件夹');
-        }
+    // 创建文件夹（本地/远程：远程通过创建占位对象实现）
+    use('images/createFolder', async function (req, res) {
         const folderName = req.body.folderName;
+        const reqType = ((req.body && req.body.storageType) || (getStorageConfig().type || 'local')).toLowerCase();
+
         if (!folderName) {
             return res.send(400, '文件夹名称不能为空');
         }
 
-        // 验证文件夹名称 - 修改正则表达式以支持中文
+        // 验证文件夹名称 - 支持中文
         if (!/^[\w\u4e00-\u9fa5\-]+$/.test(folderName)) {
             return res.send(400, '文件夹名称只能包含字母、数字、下划线、短横线和中文');
         }
 
-        // 获取配置中的路径
-        const config = getStorageConfig();
-        const folderPath = path.join(hexo.source_dir, config.customPath, folderName);
+        if (reqType === 'local') {
+            // 获取配置中的路径
+            const config = getStorageConfig();
+            const folderPath = path.join(hexo.source_dir, config.customPath, folderName);
 
-        try {
-            if (fs.existsSync(folderPath)) {
-                return res.send(400, '文件夹已存在');
+            try {
+                if (fs.existsSync(folderPath)) {
+                    return res.send(400, '文件夹已存在');
+                }
+
+                fs.ensureDirSync(folderPath);
+                return res.done({ success: true, folderName: folderName });
+            } catch (err) {
+                console.error('创建文件夹失败:', err);
+                return res.send(500, '创建文件夹失败: ' + err.message);
             }
+        }
 
-            fs.ensureDirSync(folderPath);
-            res.done({ success: true, folderName: folderName });
+        // 远程图床
+        try {
+            await createRemoteFolder(reqType, folderName, getStorageConfig());
+            return res.done({ success: true, folderName: folderName });
         } catch (err) {
-            console.error('创建文件夹失败:', err);
-            res.send(500, '创建文件夹失败: ' + err.message);
+            console.error('远程图床创建文件夹失败:', err);
+            return res.send(500, '远程图床创建文件夹失败: ' + err.message);
         }
     });
 
-    // 删除图片
-    use('images/delete', function (req, res) {
-        const configType = (getStorageConfig().type || 'local').toLowerCase();
-        if (configType !== 'local') {
-            return res.send(400, '当前存储类型不支持删除操作');
+    // 删除文件夹（本地/远程）
+    use('images/folder/delete', async function (req, res) {
+        const { folder, storageType, recursive } = req.body || {};
+        const config = getStorageConfig();
+        const type = ((storageType) || config.type || 'local').toLowerCase();
+
+        // 校验 folder
+        if (!folder || typeof folder !== 'string') {
+            return res.send(400, '文件夹名称不能为空');
         }
+        const normalizedFolder = folder.replace(/^\/+/, '').replace(/\\/g, '/');
+        if (normalizedFolder.includes('..')) {
+            return res.send(400, '非法的文件夹路径');
+        }
+
+        try {
+            if (type === 'local') {
+                const baseDir = path.join(hexo.source_dir, config.customPath, normalizedFolder);
+                if (!fs.existsSync(baseDir)) {
+                    return res.send(404, '文件夹不存在');
+                }
+                if (recursive) {
+                    fs.rmSync(baseDir, { recursive: true, force: true });
+                    return res.done({ success: true });
+                }
+                // 非递归：要求空目录
+                const items = fs.readdirSync(baseDir);
+                if (items.length > 0) {
+                    return res.send(409, '文件夹非空');
+                }
+                fs.rmdirSync(baseDir);
+                return res.done({ success: true });
+            }
+
+            // 远程存储：按前缀删除
+            const prefix = normalizedFolder.endsWith('/') ? normalizedFolder : normalizedFolder + '/';
+            const allObjects = await listRemoteObjects(type, config);
+            const inFolder = allObjects.filter(obj => obj.key.startsWith(prefix));
+
+            if (!recursive) {
+                // 仅当没有对象或仅有占位 .keep 时允许删除
+                const realObjs = inFolder.filter(obj => path.basename(obj.key) !== '.keep');
+                if (realObjs.length > 0) {
+                    return res.send(409, '文件夹非空');
+                }
+                // 删除占位
+                const keep = inFolder.find(obj => path.basename(obj.key) === '.keep');
+                if (keep) {
+                    await remoteDeleteObject(type, keep.key, config);
+                }
+                return res.done({ success: true });
+            }
+
+            // 递归删除全部对象
+            const keys = inFolder.map(obj => obj.key);
+            if (keys.length > 0) {
+                await remoteBatchDeleteObjects(type, keys, config);
+            }
+            return res.done({ success: true });
+        } catch (err) {
+            console.error('删除文件夹失败:', err);
+            return res.send(500, '删除文件夹失败: ' + err.message);
+        }
+    });
+
+    // 删除图片（本地/远程）
+    use('images/delete', async function (req, res) {
         const imagePath = req.body.path;
         if (!imagePath) {
             return res.send(400, '图片路径不能为空');
         }
 
-        const fullPath = path.join(hexo.source_dir, imagePath);
+        const config = getStorageConfig();
+        const type = ((req.body && req.body.storageType) || (req.query && req.query.storageType) || config.type || 'local').toLowerCase();
 
-        try {
-            if (!fs.existsSync(fullPath)) {
-                return res.send(404, '图片不存在');
+        if (type === 'local') {
+            const fullPath = path.join(hexo.source_dir, imagePath);
+            try {
+                if (!fs.existsSync(fullPath)) {
+                    return res.send(404, '图片不存在');
+                }
+                fs.removeSync(fullPath);
+                return res.done({ success: true });
+            } catch (err) {
+                console.error('删除图片失败:', err);
+                return res.send(500, '删除图片失败: ' + err.message);
             }
+        }
 
-            fs.removeSync(fullPath);
-            res.done({ success: true });
+        // 远程删除
+        try {
+            const key = imagePath.replace(/^\/+/, '');
+            await remoteDeleteObject(type, key, config);
+            return res.done({ success: true });
         } catch (err) {
-            console.error('删除图片失败:', err);
-            res.send(500, '删除图片失败: ' + err.message);
+            console.error('远程图床删除失败:', err);
+            return res.send(500, '远程图床删除失败: ' + err.message);
         }
     });
 
@@ -508,59 +611,74 @@ module.exports = function (app, hexo, use, db) {
         }
     }
 
-    // 重命名图片
-    use('images/rename', function (req, res) {
-        const configType = (getStorageConfig().type || 'local').toLowerCase();
-        if (configType !== 'local') {
-            return res.send(400, '当前存储类型不支持重命名操作');
-        }
+    // 重命名图片（本地/远程，仅更名不改目录）
+    use('images/rename', async function (req, res) {
         const oldPath = req.body.oldPath;
-        const newName = req.body.newName;
+        let newName = req.body.newName;
 
         if (!oldPath || !newName) {
             return res.send(400, '缺少必要参数');
         }
 
-        // 验证新文件名 - 修改正则表达式以支持中文
-        if (!/^[\w\u4e00-\u9fa5\-\.]+$/.test(newName)) {
-            return res.send(400, '文件名只能包含字母、数字、下划线、短横线、点和中文');
+        // 验证新文件名 - 支持中文，禁止目录分隔符
+        if (!/^[\w\u4e00-\u9fa5\-\.]+$/.test(newName) || /\//.test(newName)) {
+            return res.send(400, '文件名不合法');
         }
 
-        const fullOldPath = path.join(hexo.source_dir, oldPath);
+        const config = getStorageConfig();
+        const type = ((req.body && req.body.storageType) || config.type || 'local').toLowerCase();
 
-        if (!fs.existsSync(fullOldPath)) {
-            return res.send(404, '图片不存在');
+        if (type === 'local') {
+            const fullOldPath = path.join(hexo.source_dir, oldPath);
+            if (!fs.existsSync(fullOldPath)) {
+                return res.send(404, '图片不存在');
+            }
+            const dirName = path.dirname(fullOldPath);
+            const originalExt = path.extname(fullOldPath);
+            const newNameWithExt = newName.includes('.') ? newName : `${newName}${originalExt}`;
+            const fullNewPath = path.join(dirName, newNameWithExt);
+            if (fs.existsSync(fullNewPath)) {
+                return res.send(400, '该文件名已存在');
+            }
+            try {
+                fs.renameSync(fullOldPath, fullNewPath);
+                const relativePath = path.relative(hexo.source_dir, fullNewPath).replace(/\\/g, '/');
+                return res.done({
+                    success: true,
+                    newPath: `/${relativePath}`,
+                    url: `${hexo.config.url}/${relativePath}`,
+                    name: newNameWithExt
+                });
+            } catch (err) {
+                console.error('重命名图片失败:', err);
+                return res.send(500, '重命名图片失败: ' + err.message);
+            }
         }
 
-        const dirName = path.dirname(fullOldPath);
-        const extension = path.extname(fullOldPath);
-        const newNameWithExt = newName.includes('.') ? newName : `${newName}${extension}`;
-        const fullNewPath = path.join(dirName, newNameWithExt);
-
-        if (fs.existsSync(fullNewPath)) {
-            return res.send(400, '该文件名已存在');
-        }
-
+        // 远程：通过移动到同目录下的新文件名实现
         try {
-            fs.renameSync(fullOldPath, fullNewPath);
+            const srcKey = oldPath.replace(/^\/+/, '');
+            const originalExt = path.extname(srcKey);
+            const newNameWithExt = newName.includes('.') ? newName : `${newName}${originalExt}`;
+            const dir = path.dirname(srcKey);
+            const dstKey = dir && dir !== '.' ? `${dir}/${newNameWithExt}` : newNameWithExt;
 
-            // 计算新的相对路径
-            const relativePath = path.relative(hexo.source_dir, fullNewPath).replace(/\\/g, '/');
+            const finalKey = await moveRemoteObject(type, srcKey, dstKey, config);
 
-            res.done({
+            return res.done({
                 success: true,
-                newPath: `/${relativePath}`,
-                url: `${hexo.config.url}/${relativePath}`,
-                name: newNameWithExt
+                newPath: finalKey,
+                url: buildObjectUrl(type, finalKey, config),
+                name: path.basename(finalKey)
             });
         } catch (err) {
-            console.error('重命名图片失败:', err);
-            res.send(500, '重命名图片失败: ' + err.message);
+            console.error('远程图床重命名失败:', err);
+            return res.send(500, '远程图床重命名失败: ' + err.message);
         }
     });
 
-    // 移动图片到指定文件夹
-    use('images/move', function (req, res) {
+    // 移动图片到指定文件夹（本地/远程）
+    use('images/move', async function (req, res) {
         const imagePath = req.body.path;
         const targetFolder = req.body.targetFolder || '';
 
@@ -568,53 +686,299 @@ module.exports = function (app, hexo, use, db) {
             return res.send(400, '图片路径不能为空');
         }
 
-        // 仅本地存储支持移动
         const config = getStorageConfig();
-        if ((config.type || 'local') !== 'local') {
-            return res.send(400, '当前存储类型不支持移动操作');
+        const type = ((req.body && req.body.storageType) || (req.query && req.query.storageType) || config.type || 'local').toLowerCase();
+
+        if (type === 'local') {
+            const fullPath = path.join(hexo.source_dir, imagePath);
+
+            if (!fs.existsSync(fullPath)) {
+                return res.send(404, '图片不存在');
+            }
+
+            const fileName = path.basename(fullPath);
+            const targetDir = targetFolder
+                ? path.join(hexo.source_dir, config.customPath, targetFolder)
+                : path.join(hexo.source_dir, config.customPath);
+
+            // 确保目标目录存在
+            fs.ensureDirSync(targetDir);
+
+            let targetPath = path.join(targetDir, fileName);
+
+            // 检查目标路径是否已存在同名文件
+            if (fs.existsSync(targetPath)) {
+                const nameWithoutExt = fileName.substring(0, fileName.lastIndexOf('.'));
+                const extension = fileName.substring(fileName.lastIndexOf('.'));
+                const newFileName = `${nameWithoutExt}_${Date.now()}${extension}`;
+                targetPath = path.join(targetDir, newFileName);
+            }
+
+            try {
+                fs.moveSync(fullPath, targetPath);
+
+                // 计算新的相对路径
+                const relativePath = path.relative(hexo.source_dir, targetPath).replace(/\\/g, '/');
+
+                return res.done({
+                    success: true,
+                    newPath: `/${relativePath}`,
+                    url: `${hexo.config.url}/${relativePath}`,
+                    name: path.basename(targetPath)
+                });
+            } catch (err) {
+                console.error('移动图片失败:', err);
+                return res.send(500, '移动图片失败: ' + err.message);
+            }
         }
 
-        const fullPath = path.join(hexo.source_dir, imagePath);
-
-        if (!fs.existsSync(fullPath)) {
-            return res.send(404, '图片不存在');
-        }
-
-        const fileName = path.basename(fullPath);
-        const targetDir = targetFolder
-            ? path.join(hexo.source_dir, config.customPath, targetFolder)
-            : path.join(hexo.source_dir, config.customPath);
-
-        // 确保目标目录存在
-        fs.ensureDirSync(targetDir);
-
-        let targetPath = path.join(targetDir, fileName);  // 改为 let 声明
-
-        // 检查目标路径是否已存在同名文件
-        if (fs.existsSync(targetPath)) {
-            const nameWithoutExt = fileName.substring(0, fileName.lastIndexOf('.'));
-            const extension = fileName.substring(fileName.lastIndexOf('.'));
-            const newFileName = `${nameWithoutExt}_${Date.now()}${extension}`;
-            targetPath = path.join(targetDir, newFileName);
-        }
-
+        // 远程对象存储移动（拷贝 + 删除）
         try {
-            fs.moveSync(fullPath, targetPath);
+            const srcKey = imagePath.replace(/^\/+/, '');
+            const fileName = path.basename(srcKey);
+            const dstKey = targetFolder ? `${targetFolder}/${fileName}` : fileName;
 
-            // 计算新的相对路径
-            const relativePath = path.relative(hexo.source_dir, targetPath).replace(/\\/g, '/');
+            const finalKey = await moveRemoteObject(type, srcKey, dstKey, config);
 
-            res.done({
+            return res.done({
                 success: true,
-                newPath: `/${relativePath}`,
-                url: `${hexo.config.url}/${relativePath}`,
-                name: path.basename(targetPath)
+                newPath: finalKey,
+                url: buildObjectUrl(type, finalKey, config),
+                name: path.basename(finalKey)
             });
         } catch (err) {
-            console.error('移动图片失败:', err);
-            res.send(500, '移动图片失败: ' + err.message);
+            console.error('远程图床移动失败:', err);
+            return res.send(500, '远程图床移动失败: ' + err.message);
         }
     });
+
+    // === 远程文件夹与移动辅助函数 ===
+    async function createRemoteFolder(type, folderName, config) {
+        const placeholderKey = `${folderName}/.keep`;
+        const empty = Buffer.from('');
+
+        if (type === 'aliyun' && aliOSS) {
+            const { region, bucket, accessKeyId, accessKeySecret } = config.aliyun || {};
+            if (!region || !bucket || !accessKeyId || !accessKeySecret) throw new Error('阿里云OSS配置不完整');
+            const client = new aliOSS({ region, accessKeyId, accessKeySecret, bucket });
+            await client.put(placeholderKey, empty);
+            return;
+        }
+
+        if (type === 'qiniu' && qiniuSDK) {
+            const { bucket, accessKey, secretKey, region } = config.qiniu || {};
+            if (!bucket || !accessKey || !secretKey) throw new Error('七牛云配置不完整');
+            const mac = new qiniuSDK.auth.digest.Mac(accessKey, secretKey);
+            const putPolicy = new qiniuSDK.rs.PutPolicy({ scope: bucket });
+            const uploadToken = putPolicy.uploadToken(mac);
+            const qnConfig = new qiniuSDK.conf.Config();
+            if (region && qiniuSDK.zone[region]) qnConfig.zone = qiniuSDK.zone[region];
+            const formUploader = new qiniuSDK.form_up.FormUploader(qnConfig);
+
+            await new Promise((resolve, reject) => {
+                formUploader.put(uploadToken, placeholderKey, empty, null, function (err, respBody, respInfo) {
+                    if (err) return reject(err);
+                    if (respInfo.statusCode === 200) resolve(respBody);
+                    else reject(new Error('七牛创建占位对象失败: ' + respInfo.statusCode));
+                });
+            });
+            return;
+        }
+
+        if (type === 'tencent' && tencentCOS) {
+            const { region, bucket, secretId, secretKey } = config.tencent || {};
+            if (!region || !bucket || !secretId || !secretKey) throw new Error('腾讯云COS配置不完整');
+            const cos = new tencentCOS({ SecretId: secretId, SecretKey: secretKey });
+            await new Promise((resolve, reject) => {
+                cos.putObject({ Bucket: bucket, Region: region, Key: placeholderKey, Body: empty }, (err) => {
+                    if (err) return reject(err);
+                    resolve(null);
+                });
+            });
+            return;
+        }
+
+        throw new Error(`${type} 未安装 SDK 或不支持`);
+    }
+
+    async function remoteObjectExists(type, key, config) {
+        if (type === 'aliyun' && aliOSS) {
+            const { region, bucket, accessKeyId, accessKeySecret } = config.aliyun || {};
+            const client = new aliOSS({ region, accessKeyId, accessKeySecret, bucket });
+            try { await client.head(key); return true; } catch (e) { return false; }
+        }
+        if (type === 'qiniu' && qiniuSDK) {
+            const { bucket, accessKey, secretKey, region } = config.qiniu || {};
+            const mac = new qiniuSDK.auth.digest.Mac(accessKey, secretKey);
+            const qnConfig = new qiniuSDK.conf.Config();
+            if (region && qiniuSDK.zone[region]) qnConfig.zone = qiniuSDK.zone[region];
+            const bucketManager = new qiniuSDK.rs.BucketManager(mac, qnConfig);
+            return await new Promise((resolve) => {
+                bucketManager.stat(bucket, key, (err, _, info) => {
+                    if (err) return resolve(false);
+                    resolve(info && info.statusCode === 200);
+                });
+            });
+        }
+        if (type === 'tencent' && tencentCOS) {
+            const { region, bucket, secretId, secretKey } = config.tencent || {};
+            const cos = new tencentCOS({ SecretId: secretId, SecretKey: secretKey });
+            return await new Promise((resolve) => {
+                cos.headObject({ Bucket: bucket, Region: region, Key: key }, (err) => resolve(!err));
+            });
+        }
+        return false;
+    }
+
+    async function ensureUniqueKey(type, desiredKey, config) {
+        if (!(await remoteObjectExists(type, desiredKey, config))) return desiredKey;
+        const ext = path.extname(desiredKey);
+        const base = ext ? desiredKey.slice(0, -ext.length) : desiredKey;
+        const candidate = `${base}_${Date.now()}${ext}`;
+        return candidate;
+    }
+
+    async function moveRemoteObject(type, srcKey, dstKey, config) {
+        const finalKey = await ensureUniqueKey(type, dstKey, config);
+
+        if (type === 'aliyun' && aliOSS) {
+            const { region, bucket, accessKeyId, accessKeySecret } = config.aliyun || {};
+            const client = new aliOSS({ region, accessKeyId, accessKeySecret, bucket });
+            await client.copy(finalKey, srcKey);
+            await client.delete(srcKey);
+            return finalKey;
+        }
+
+        if (type === 'qiniu' && qiniuSDK) {
+            const { bucket, accessKey, secretKey, region } = config.qiniu || {};
+            const mac = new qiniuSDK.auth.digest.Mac(accessKey, secretKey);
+            const qnConfig = new qiniuSDK.conf.Config();
+            if (region && qiniuSDK.zone[region]) qnConfig.zone = qiniuSDK.zone[region];
+            const bucketManager = new qiniuSDK.rs.BucketManager(mac, qnConfig);
+
+            await new Promise((resolve, reject) => {
+                bucketManager.move(bucket, srcKey, bucket, finalKey, { force: true }, (err, _, info) => {
+                    if (err) return reject(err);
+                    if (info && (info.statusCode === 200 || info.statusCode === 614)) resolve(null);
+                    else reject(new Error('七牛移动失败: ' + info.statusCode));
+                });
+            });
+            return finalKey;
+        }
+
+        if (type === 'tencent' && tencentCOS) {
+            const { region, bucket, secretId, secretKey } = config.tencent || {};
+            const cos = new tencentCOS({ SecretId: secretId, SecretKey: secretKey });
+
+            const CopySource = `${bucket}.cos.${region}.myqcloud.com/${encodeURI(srcKey)}`;
+            await new Promise((resolve, reject) => {
+                // cos-nodejs-sdk-v5 使用 putObjectCopy 进行拷贝
+                cos.putObjectCopy({ Bucket: bucket, Region: region, Key: finalKey, CopySource }, (err) => {
+                    if (err) return reject(err);
+                    resolve(null);
+                });
+            });
+            await new Promise((resolve, reject) => {
+                cos.deleteObject({ Bucket: bucket, Region: region, Key: srcKey }, (err) => {
+                    if (err) return reject(err);
+                    resolve(null);
+                });
+            });
+            return finalKey;
+        }
+
+        throw new Error(`${type} 未安装 SDK 或不支持`);
+    }
+
+    async function remoteDeleteObject(type, key, config) {
+        if (type === 'aliyun' && aliOSS) {
+            const { region, bucket, accessKeyId, accessKeySecret } = config.aliyun || {};
+            const client = new aliOSS({ region, accessKeyId, accessKeySecret, bucket });
+            await client.delete(key);
+            return;
+        }
+        if (type === 'qiniu' && qiniuSDK) {
+            const { bucket, accessKey, secretKey, region } = config.qiniu || {};
+            const mac = new qiniuSDK.auth.digest.Mac(accessKey, secretKey);
+            const qnConfig = new qiniuSDK.conf.Config();
+            if (region && qiniuSDK.zone[region]) qnConfig.zone = qiniuSDK.zone[region];
+            const bucketManager = new qiniuSDK.rs.BucketManager(mac, qnConfig);
+            await new Promise((resolve, reject) => {
+                bucketManager.delete(bucket, key, (err, respBody, respInfo) => {
+                    if (err) return reject(err);
+                    if (respInfo && respInfo.statusCode === 200) resolve(null);
+                    else reject(new Error('七牛删除失败: ' + (respInfo && respInfo.statusCode)));
+                });
+            });
+            return;
+        }
+        if (type === 'tencent' && tencentCOS) {
+            const { region, bucket, secretId, secretKey } = config.tencent || {};
+            const cos = new tencentCOS({ SecretId: secretId, SecretKey: secretKey });
+            await new Promise((resolve, reject) => {
+                cos.deleteObject({ Bucket: bucket, Region: region, Key: key }, (err) => {
+                    if (err) return reject(err);
+                    resolve(null);
+                });
+            });
+            return;
+        }
+        throw new Error(`${type} 未安装 SDK 或不支持`);
+    }
+
+    async function remoteBatchDeleteObjects(type, keys, config) {
+        if (!Array.isArray(keys) || keys.length === 0) return;
+        const chunk = (arr, size) => {
+            const out = [];
+            for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+            return out;
+        };
+
+        if (type === 'aliyun' && aliOSS) {
+            const { region, bucket, accessKeyId, accessKeySecret } = config.aliyun || {};
+            const client = new aliOSS({ region, accessKeyId, accessKeySecret, bucket });
+            for (const batch of chunk(keys, 1000)) {
+                await client.deleteMulti(batch, { quiet: true });
+            }
+            return;
+        }
+
+        if (type === 'qiniu' && qiniuSDK) {
+            const { bucket, accessKey, secretKey, region } = config.qiniu || {};
+            const mac = new qiniuSDK.auth.digest.Mac(accessKey, secretKey);
+            const qnConfig = new qiniuSDK.conf.Config();
+            if (region && qiniuSDK.zone[region]) qnConfig.zone = qiniuSDK.zone[region];
+            const bucketManager = new qiniuSDK.rs.BucketManager(mac, qnConfig);
+            for (const batch of chunk(keys, 1000)) {
+                const ops = batch.map(k => qiniuSDK.rs.deleteOp(bucket, k));
+                await new Promise((resolve, reject) => {
+                    bucketManager.batch(ops, (err, respBody, respInfo) => {
+                        if (err) return reject(err);
+                        if (respInfo && (respInfo.statusCode === 200 || respInfo.statusCode === 298)) resolve(null);
+                        else reject(new Error('七牛批量删除失败: ' + (respInfo && respInfo.statusCode)));
+                    });
+                });
+            }
+            return;
+        }
+
+        if (type === 'tencent' && tencentCOS) {
+            const { region, bucket, secretId, secretKey } = config.tencent || {};
+            const cos = new tencentCOS({ SecretId: secretId, SecretKey: secretKey });
+            for (const batch of chunk(keys, 1000)) {
+                const Objects = batch.map(k => ({ Key: k }));
+                await new Promise((resolve, reject) => {
+                    cos.deleteMultipleObject({ Bucket: bucket, Region: region, Objects }, (err, data) => {
+                        if (err) return reject(err);
+                        resolve(data);
+                    });
+                });
+            }
+            return;
+        }
+
+        throw new Error(`${type} 未安装 SDK 或不支持`);
+    }
 
     // 阿里云OSS上传处理函数
     async function handleAliyunUpload(req, res, config) {
