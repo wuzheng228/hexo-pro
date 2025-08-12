@@ -42,6 +42,19 @@ function getStorageConfig() {
     return config;
 }
 
+// 将 multer 提供的 originalname 从 latin1 纠正为 utf8，避免中文名乱码
+function ensureUtf8Filename(name) {
+    try {
+        if (!name) return name;
+        // Node/multer 常把 header 中的 filename 当作 latin1 解码
+        // 这里转换为 UTF-8 字符串
+        const decoded = Buffer.from(name, 'latin1').toString('utf8');
+        return decoded || name;
+    } catch (_) {
+        return name;
+    }
+}
+
 module.exports = function (app, hexo, use, db) {
     const settingsDb = db && db.settingsDb;
 
@@ -450,7 +463,13 @@ module.exports = function (app, hexo, use, db) {
     // 上传图片 - 修改为支持表单数据上传和第三方图床
     use('images/upload', function (req, res, next) {
         const config = getStorageConfig();
-        const reqType = ((req.body && req.body.storageType) || req.query.storageType || config.type || 'local').toLowerCase();
+        const reqType = (
+            (req.body && req.body.storageType) ||
+            (req.query && req.query.storageType) ||
+            req.headers['x-storage-type'] ||
+            config.type ||
+            'local'
+        ).toLowerCase();
 
         // 根据请求或配置的存储类型处理上传
         if (reqType === 'local') {
@@ -472,141 +491,123 @@ module.exports = function (app, hexo, use, db) {
     function handleLocalUpload(req, res, next, config) {
         // 检查是否为表单数据上传
         if (req.headers['content-type'] && req.headers['content-type'].includes('multipart/form-data')) {
-            // 使用multer处理单个文件上传
-            upload.single('data')(req, res, function (err) {
+            // 接收任意字段，支持多文件
+            upload.any()(req, res, function (err) {
                 if (err) {
                     console.error('文件上传失败:', err);
                     return res.send(500, '文件上传失败: ' + err.message);
                 }
 
-                if (!req.file) {
+                const files = Array.isArray(req.files) ? req.files : (req.file ? [req.file] : []);
+                if (!files || files.length === 0) {
                     return res.send(400, '没有上传文件');
                 }
 
                 try {
-                    // 获取文件信息
-                    const file = req.file;
                     const folder = req.body.folder || '';
-                    let filename = req.body.filename || path.basename(file.filename);
-
-                    // 确定保存路径
                     const sourceImagesDir = path.join(hexo.source_dir, config.customPath);
-                    const targetDir = folder
-                        ? path.join(sourceImagesDir, folder)
-                        : sourceImagesDir;
-
-                    // 确保目录存在
+                    const targetDir = folder ? path.join(sourceImagesDir, folder) : sourceImagesDir;
                     fs.ensureDirSync(targetDir);
 
-                    // 如果文件已经在临时目录，移动到目标目录
-                    const finalFilePath = path.join(targetDir, filename);
+                    const results = [];
+                    for (const f of files) {
+                        let filename = req.body.filename || ensureUtf8Filename(f.originalname) || path.basename(f.filename);
+                        if (!filename) filename = `${uuidv4()}${path.extname(f.originalname || '')}`;
 
-                    // 检查文件是否已存在
-                    if (fs.existsSync(finalFilePath)) {
-                        // 如果文件已存在，添加时间戳
-                        const nameWithoutExt = filename.substring(0, filename.lastIndexOf('.'));
-                        const extension = filename.substring(filename.lastIndexOf('.'));
-                        filename = `${nameWithoutExt}_${Date.now()}${extension}`;
+                        let dstPath = path.join(targetDir, filename);
+                        if (fs.existsSync(dstPath)) {
+                            const nameWithoutExt = filename.substring(0, filename.lastIndexOf('.'));
+                            const extension = filename.substring(filename.lastIndexOf('.')) || '';
+                            filename = `${nameWithoutExt}_${Date.now()}${extension}`;
+                            dstPath = path.join(targetDir, filename);
+                        }
+
+                        fs.moveSync(f.path, dstPath, { overwrite: false });
+
+                        const relativePath = folder ? `${config.customPath}/${folder}/${filename}` : `${config.customPath}/${filename}`;
+                        results.push({
+                            code: 0,
+                            url: `${hexo.config.url}/${relativePath}`,
+                            path: `/${relativePath}`,
+                            name: filename,
+                            src: `${hexo.config.url}/${relativePath}`
+                        });
                     }
 
-                    // 移动文件到最终位置
-                    fs.moveSync(file.path, path.join(targetDir, filename), { overwrite: false });
-
-                    // 返回图片URL
-                    const relativePath = folder
-                        ? `${config.customPath}/${folder}/${filename}`
-                        : `${config.customPath}/${filename}`;
-
-                    res.done({
-                        code: 0,
-                        url: hexo.config.url + `/${relativePath}`,
-                        path: `/${relativePath}`,
-                        name: filename,
-                        src: hexo.config.url + `/${relativePath}` // 添加src字段以兼容现有代码
-                    });
+                    if (results.length === 1) {
+                        return res.done(results[0]);
+                    }
+                    return res.done({ code: 0, items: results });
                 } catch (err) {
                     console.error('保存图片失败:', err);
-                    res.send(500, '保存图片失败: ' + err.message);
+                    return res.send(500, '保存图片失败: ' + err.message);
                 }
             });
         } else {
             // 处理Base64上传方式
-            const data = req.body.data;
-            let filename = req.body.filename || '';
+            // 支持单个 { data, filename, folder } 或 items: [{...}, ...]
+            const items = Array.isArray(req.body.items) ? req.body.items : null;
             const folder = req.body.folder || '';
 
-            if (!data) {
-                return res.send(400, '图片数据不能为空');
-            }
+            const processOne = (payload) => {
+                const data = payload.data;
+                let filename = payload.filename || '';
+                const subFolder = payload.folder || folder || '';
 
-            // 处理Base64图片数据
-            const matches = data.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
-            if (!matches || matches.length !== 3) {
-                return res.send(400, '无效的图片数据');
-            }
-
-            const type = matches[1];
-            const imageBuffer = Buffer.from(matches[2], 'base64');
-
-            // 如果没有提供文件名，生成一个唯一的文件名
-            if (!filename) {
-                // 修复SVG+XML扩展名问题
-                let extension = type.split('/')[1];
-                // 特殊处理SVG+XML类型
-                if (extension === 'svg+xml') {
-                    extension = 'svg';
+                if (!data) throw new Error('图片数据不能为空');
+                const matches = data.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+                if (!matches || matches.length !== 3) throw new Error('无效的图片数据');
+                const type = matches[1];
+                const imageBuffer = Buffer.from(matches[2], 'base64');
+                if (!filename) {
+                    let extension = type.split('/')[1];
+                    if (extension === 'svg+xml') extension = 'svg';
+                    filename = `${uuidv4()}.${extension}`;
+                } else {
+                    let extension = type.split('/')[1];
+                    if (extension === 'svg+xml') extension = 'svg';
+                    if (!filename.endsWith(`.${extension}`)) filename = `${filename}.${extension}`;
                 }
-                filename = `${uuidv4()}.${extension}`;
-            } else {
-                // 确保文件名有正确的扩展名
-                let extension = type.split('/')[1];
-                // 特殊处理SVG+XML类型
-                if (extension === 'svg+xml') {
-                    extension = 'svg';
+
+                const targetDir = subFolder ? path.join(hexo.source_dir, config.customPath, subFolder) : path.join(hexo.source_dir, config.customPath);
+                fs.ensureDirSync(targetDir);
+                let finalName = filename;
+                let finalPath = path.join(targetDir, finalName);
+                if (fs.existsSync(finalPath)) {
+                    const nameWithoutExt = finalName.substring(0, finalName.lastIndexOf('.'));
+                    const extension = finalName.substring(finalName.lastIndexOf('.'));
+                    finalName = `${nameWithoutExt}_${Date.now()}${extension}`;
+                    finalPath = path.join(targetDir, finalName);
                 }
-                if (!filename.endsWith(`.${extension}`)) {
-                    filename = `${filename}.${extension}`;
-                }
-            }
-
-            // 确定保存路径
-            const targetDir = folder
-                ? path.join(hexo.source_dir, config.customPath, folder)
-                : path.join(hexo.source_dir, config.customPath);
-
-            // 确保目录存在
-            fs.ensureDirSync(targetDir);
-
-            const filePath = path.join(targetDir, filename);
-
-            // 检查文件是否已存在
-            if (fs.existsSync(filePath)) {
-                // 如果文件已存在，添加时间戳
-                const nameWithoutExt = filename.substring(0, filename.lastIndexOf('.'));
-                const extension = filename.substring(filename.lastIndexOf('.'));
-                filename = `${nameWithoutExt}_${Date.now()}${extension}`;
-            }
-
-            const finalFilePath = path.join(targetDir, filename);
-
-            try {
-                fs.writeFileSync(finalFilePath, imageBuffer);
-
-                // 返回图片URL
-                const relativePath = folder
-                    ? `${config.customPath}/${folder}/${filename}`
-                    : `${config.customPath}/${filename}`;
-
-                res.done({
+                fs.writeFileSync(finalPath, imageBuffer);
+                const relativePath = subFolder ? `${config.customPath}/${subFolder}/${finalName}` : `${config.customPath}/${finalName}`;
+                return {
                     code: 0,
                     url: `${hexo.config.url}/${relativePath}`,
                     path: `/${relativePath}`,
-                    name: filename,
-                    src: `${hexo.config.url}/${relativePath}` // 添加src字段以兼容现有代码
-                });
+                    name: finalName,
+                    src: `${hexo.config.url}/${relativePath}`
+                };
+            };
+
+            try {
+                if (items && items.length > 0) {
+                    const results = [];
+                    for (const it of items) {
+                        try {
+                            results.push(processOne(it));
+                        } catch (e) {
+                            results.push({ code: 500, msg: e.message, name: it.filename });
+                        }
+                    }
+                    return res.done({ code: 0, items: results });
+                } else {
+                    const result = processOne(req.body);
+                    return res.done(result);
+                }
             } catch (err) {
                 console.error('保存图片失败:', err);
-                res.send(500, '保存图片失败: ' + err.message);
+                return res.send(500, '保存图片失败: ' + err.message);
             }
         }
     }
@@ -1007,7 +1008,7 @@ module.exports = function (app, hexo, use, db) {
                     }
 
                     imageData = fs.readFileSync(req.file.path);
-                    filename = req.body.filename || req.file.originalname;
+                    filename = req.body.filename || ensureUtf8Filename(req.file.originalname);
                     folder = req.body.folder || '';
 
                     await uploadToAliyun(client, imageData, filename, folder, domain, res);
@@ -1091,7 +1092,7 @@ module.exports = function (app, hexo, use, db) {
                     }
 
                     imageData = fs.readFileSync(req.file.path);
-                    filename = req.body.filename || req.file.originalname;
+                    filename = req.body.filename || ensureUtf8Filename(req.file.originalname);
                     folder = req.body.folder || '';
 
                     await uploadToQiniu(formUploader, uploadToken, imageData, filename, folder, domain, res);
@@ -1173,7 +1174,7 @@ module.exports = function (app, hexo, use, db) {
                     }
 
                     imageData = fs.readFileSync(req.file.path);
-                    filename = req.body.filename || req.file.originalname;
+                    filename = req.body.filename || ensureUtf8Filename(req.file.originalname);
                     folder = req.body.folder || '';
 
                     await uploadToTencent(cos, region, bucket, imageData, filename, folder, domain, res);
