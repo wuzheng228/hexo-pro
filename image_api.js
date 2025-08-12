@@ -436,7 +436,7 @@ module.exports = function (app, hexo, use, db) {
         const type = ((req.body && req.body.storageType) || (req.query && req.query.storageType) || config.type || 'local').toLowerCase();
 
         if (type === 'local') {
-            const fullPath = path.join(hexo.source_dir, imagePath);
+            const fullPath = path.join(hexo.source_dir, String(imagePath).replace(/^\/+/, ''));
             try {
                 if (!fs.existsSync(fullPath)) {
                     return res.send(404, '图片不存在');
@@ -457,6 +457,37 @@ module.exports = function (app, hexo, use, db) {
         } catch (err) {
             console.error('远程图床删除失败:', err);
             return res.send(500, '远程图床删除失败: ' + err.message);
+        }
+    });
+
+    // 批量删除图片（本地/远程）
+    use('images/delete/batch', async function (req, res) {
+        const paths = req.body.paths;
+        if (!Array.isArray(paths) || paths.length === 0) {
+            return res.send(400, '缺少要删除的图片列表');
+        }
+        const config = getStorageConfig();
+        const type = ((req.body && req.body.storageType) || (req.query && req.query.storageType) || config.type || 'local').toLowerCase();
+
+        try {
+            if (type === 'local') {
+                let deleted = 0;
+                for (const p of paths) {
+                    const fullPath = path.join(hexo.source_dir, String(p).replace(/^\/+/, ''));
+                    if (fs.existsSync(fullPath)) {
+                        try { fs.removeSync(fullPath); deleted++; } catch (_) { }
+                    }
+                }
+                return res.done({ success: true, deleted });
+            }
+
+            // 远程批量删除
+            const keys = paths.map(p => String(p).replace(/^\/+/, ''));
+            await remoteBatchDeleteObjects(type, keys, config);
+            return res.done({ success: true, deleted: keys.length });
+        } catch (err) {
+            console.error('批量删除图片失败:', err);
+            return res.send(500, '批量删除图片失败: ' + err.message);
         }
     });
 
