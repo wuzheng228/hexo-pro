@@ -7,6 +7,7 @@ const dashboard_api = require('./dashboard_api'); // 添加仪表盘API
 const deploy_api = require('./deploy_api'); // 添加部署API
 const settings_api = require('./settings_api'); // 添加设置API
 const auth_api = require('./auth_api'); // 添加认证API
+const recycle_api = require('./recycle_api'); // 回收站API
 const CircularJSON = require('circular-json');
 const crypto = require('crypto');
 const { expressjwt: jwt } = require('express-jwt'); // 确保引入 express-jwt
@@ -230,6 +231,7 @@ module.exports = async function (app, hexo) { // 将导出函数改为 async
         dashboard_api(app, hexo, use); // 注册仪表盘API
         deploy_api(app, hexo, use, db); // 传递数据库实例到部署API
         settings_api(app, hexo, use, db); // 注册设置API
+        recycle_api(app, hexo, use, db); // 注册回收站API
         auth_api(app, hexo, use); // 注册认证API
 
 

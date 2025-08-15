@@ -67,6 +67,24 @@ module.exports = function (app, hexo, use) {
 
                     // 刷新 Hexo 数据
                     hexo.source.process().then(() => {
+                        // 写入回收站记录
+                        try {
+                            const databaseManager = require('./database-manager');
+                            if (databaseManager && databaseManager.isReady()) {
+                                const { recycleDb } = databaseManager.getDatabases();
+                                if (recycleDb) {
+                                    recycleDb.insert({
+                                        type: 'page',
+                                        title: page.title,
+                                        permalink: page.permalink,
+                                        originalSource: page.source,
+                                        discardedPath: newSource.replace(/\\/g, '/'),
+                                        isDraft: false,
+                                        deletedAt: new Date(),
+                                    }, function () { });
+                                }
+                            }
+                        } catch (_) { }
                         res.done(addIsDraft(page))
                     }).catch(e => {
                         console.error(e, e.stack)
@@ -129,31 +147,31 @@ module.exports = function (app, hexo, use) {
         });
 
         var page = hexo.model('Page').findOne({ source: filePath.slice(hexo.source_dir.length).replace(/\\/g, '/') });
-        
+
         // 如果存在重名情况，在返回结果中添加提示信息
         if (exists) {
             page.titleChanged = true; // 添加标志，前端可以据此显示提示
             page.originalTitle = req.body.title; // 保存原始标题
         }
-        
+
         return res.done(addFormatDateTime(page));
     }
 
     // 检查页面是否存在
     use('pages/check-exists', function (req, res, next) {
         if (req.method !== 'GET') return next();
-        
+
         const parsedUrl = url.parse(req.url, true);
         const queryParams = parsedUrl.query;
         const { path: pagePath } = queryParams;  // 将参数名改为 pagePath
-        
+
         if (!pagePath) {
             return res.send(400, 'No path provided');
         }
-        
+
         const filePath = path.join(hexo.source_dir, pagePath);
         const exists = fse.pathExistsSync(filePath);
-        
+
         return res.done({ exists });
     });
 
@@ -291,33 +309,62 @@ module.exports = function (app, hexo, use) {
     })
 
     use('updatePageFrontMatter', function (req, res, next) {
-            if (req.method !== 'POST') return next();
-            if (!req.body) {
-                return res.send(500, 'No post body given');
+        if (req.method !== 'POST') return next();
+        if (!req.body) {
+            return res.send(500, 'No post body given');
+        }
+        if (!req.body.permalink) {
+            return res.send(500, 'No permalink given');
+        }
+        if (!req.body.key || !req.body.value) {
+            return res.send(500, 'Key or value missing');
+        }
+
+        const permalink = req.body.permalink;
+        const key = req.body.key;
+        const value = req.body.value;
+
+        // 构建更新对象
+        const frontMatterUpdate = {};
+        frontMatterUpdate[key] = value;
+
+        // 使用update函数更新文章
+        update(permalink, { frontMatter: frontMatterUpdate }, async function (err, post) {
+            if (err) {
+                return res.send(400, err);
             }
-            if (!req.body.permalink) {
-                return res.send(500, 'No permalink given');
-            }
-            if (!req.body.key || !req.body.value) {
-                return res.send(500, 'Key or value missing');
-            }
-    
-            const permalink = req.body.permalink;
-            const key = req.body.key;
-            const value = req.body.value;
-    
-            // 构建更新对象
-            const frontMatterUpdate = {};
-            frontMatterUpdate[key] = value;
-    
-            // 使用update函数更新文章
-            update(permalink, { frontMatter: frontMatterUpdate }, function (err, post) {
-                if (err) {
-                    return res.send(400, err);
+            post = _.cloneDeep(post);
+
+            // 如果是更新标题，则尝试同步重命名页面文件夹（<title>/index.md）
+            if (key === 'title' && typeof value === 'string' && value.trim()) {
+                try {
+                    const oldAbs = path.join(hexo.source_dir, post.source);
+                    const oldDir = path.dirname(oldAbs);
+                    const parentDir = path.dirname(oldDir);
+                    const newDirName = value.trim();
+                    let targetDirAbs = path.join(parentDir, newDirName);
+                    if (fse.pathExistsSync(targetDirAbs)) {
+                        // 若已存在同名目录，添加时间戳避免冲突
+                        targetDirAbs = path.join(parentDir, `${newDirName} (${Date.now()})`);
+                    }
+                    // 重命名目录以保留目录内资源
+                    fse.moveSync(oldDir, targetDirAbs, { overwrite: false });
+                    // 让 Hexo 重新处理
+                    await hexo.source.process();
+                    // 从模型中读取最新页面数据
+                    const rel = path.relative(hexo.source_dir, path.join(targetDirAbs, path.basename(oldAbs))).replace(/\\/g, '/');
+                    const updatedPage = hexo.model('Page').findOne({ source: rel });
+                    if (updatedPage) {
+                        return res.done(addIsDraft(updatedPage));
+                    }
+                } catch (e) {
+                    // 如果目录重命名失败，不影响标题更新
+                    console.warn('[Pages API] 重命名页面目录失败:', e && e.message);
                 }
-                post = _.cloneDeep(post);
-                res.done(addIsDraft(post));
-            }, hexo);
-        });
+            }
+
+            res.done(addIsDraft(post));
+        }, hexo);
+    });
 
 }

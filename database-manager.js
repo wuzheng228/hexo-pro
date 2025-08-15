@@ -10,7 +10,8 @@ class DatabaseManager {
     this.databases = {
       userDb: null,
       settingsDb: null,
-      deployStatusDb: null
+      deployStatusDb: null,
+      recycleDb: null
     };
     this.hexoInstance = null;
   }
@@ -32,7 +33,7 @@ class DatabaseManager {
     console.log('[Database Manager]: 开始初始化数据库...');
     this.hexoInstance = hexo;
     this.initPromise = this._performInitialization();
-    
+
     try {
       const result = await this.initPromise;
       this.isInitialized = true;
@@ -47,7 +48,7 @@ class DatabaseManager {
 
   async _performInitialization() {
     const hexo = this.hexoInstance;
-    
+
     // 确保 data 目录存在
     const dataDir = path.join(hexo.base_dir, 'data');
     if (!fs.existsSync(dataDir)) {
@@ -59,17 +60,19 @@ class DatabaseManager {
 
     // 并行创建所有数据库
     console.log('[Database Manager]: 创建数据库实例...');
-    
-    const [userDb, settingsDb, deployStatusDb] = await Promise.all([
+
+    const [userDb, settingsDb, deployStatusDb, recycleDb] = await Promise.all([
       this._createDatabase(dataDir, 'users.db'),
       this._createDatabase(dataDir, 'settings.db'),
-      this._createDatabase(dataDir, 'deploy_status.db')
+      this._createDatabase(dataDir, 'deploy_status.db'),
+      this._createDatabase(dataDir, 'recycle.db')
     ]);
 
     // 保存数据库实例
     this.databases.userDb = userDb;
     this.databases.settingsDb = settingsDb;
     this.databases.deployStatusDb = deployStatusDb;
+    this.databases.recycleDb = recycleDb;
 
     console.log('[Database Manager]: 所有数据库实例创建完成');
 
@@ -81,11 +84,11 @@ class DatabaseManager {
   }
 
   _cleanupCorruptedDbFiles(dataDir) {
-    const dbFiles = ['users.db', 'settings.db', 'deploy_status.db'];
-    
+    const dbFiles = ['users.db', 'settings.db', 'deploy_status.db', 'recycle.db'];
+
     dbFiles.forEach(dbFile => {
       const filePath = path.join(dataDir, dbFile);
-      
+
       try {
         if (fs.existsSync(filePath)) {
           const stats = fs.statSync(filePath);
@@ -95,7 +98,7 @@ class DatabaseManager {
             fs.unlinkSync(filePath);
           }
         }
-        
+
         // 清理临时文件（以 ~ 结尾）
         const tempFilePath = filePath + '~';
         if (fs.existsSync(tempFilePath)) {
@@ -111,18 +114,18 @@ class DatabaseManager {
   _createDatabase(dataDir, filename, retryCount = 3, delay = 1000) {
     return new Promise((resolve, reject) => {
       let attempts = 0;
-      
+
       const attemptLoad = () => {
         attempts++;
         console.log(`[Database Manager]: 创建数据库 ${filename} (尝试 ${attempts}/${retryCount})`);
-        
+
         const db = new Datastore({
           filename: path.join(dataDir, filename),
           autoload: true,
           onload: function (error) {
             if (error) {
               console.error(`[Database Manager]: 数据库 ${filename} 创建失败 (尝试 ${attempts}):`, error.message);
-              
+
               if (attempts < retryCount) {
                 console.log(`[Database Manager]: ${delay}ms 后重试创建数据库 ${filename}...`);
                 setTimeout(attemptLoad, delay);
@@ -137,7 +140,7 @@ class DatabaseManager {
           }
         });
       };
-      
+
       attemptLoad();
     });
   }
@@ -225,7 +228,7 @@ class DatabaseManager {
         });
 
         console.log('[Database Manager]: 从配置文件导入初始用户');
-        
+
         // 检查系统设置数据库是否为空
         const settingsCount = await new Promise((resolve, reject) => {
           settingsDb.count({ type: 'system' }, (err, count) => {
@@ -233,13 +236,13 @@ class DatabaseManager {
             else resolve(count);
           });
         });
-        
+
         // 如果设置为空，则导入或生成 JWT secret
         if (settingsCount === 0) {
-          const jwtSecret = hexo.config.hexo_pro && hexo.config.hexo_pro.secret 
-            ? hexo.config.hexo_pro.secret 
+          const jwtSecret = hexo.config.hexo_pro && hexo.config.hexo_pro.secret
+            ? hexo.config.hexo_pro.secret
             : crypto.randomBytes(32).toString('hex');
-          
+
           await new Promise((resolve, reject) => {
             settingsDb.insert({
               type: 'system',
@@ -250,7 +253,7 @@ class DatabaseManager {
               else resolve(doc);
             });
           });
-          
+
           if (hexo.config.hexo_pro && hexo.config.hexo_pro.secret) {
             console.log('[Database Manager]: 从配置文件导入 JWT 密钥');
           } else {
@@ -287,7 +290,8 @@ class DatabaseManager {
     this.databases = {
       userDb: null,
       settingsDb: null,
-      deployStatusDb: null
+      deployStatusDb: null,
+      recycleDb: null
     };
     this.hexoInstance = null;
   }
