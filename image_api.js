@@ -180,45 +180,67 @@ module.exports = function (app, hexo, use, db) {
         const page = parseInt(req.query.page) || 1;
         const pageSize = parseInt(req.query.pageSize) || 10;
         const folder = req.query.folder || '';
+        const includeSubfolders = String(req.query.includeSubfolders || 'false') === 'true';
         const config = getStorageConfig();
         const type = ((req.query.storageType || config.type) || 'local').toLowerCase();
 
         try {
             if (type === 'local') {
                 const imagesDir = path.join(hexo.source_dir, config.customPath);
+                // 迁移旧版本 .trash 到可预览的 trash 目录
+                try { migrateLocalTrash(imagesDir); } catch (_) { }
                 const targetDir = folder ? path.join(imagesDir, folder) : imagesDir;
 
                 fs.ensureDirSync(imagesDir);
                 fs.ensureDirSync(targetDir);
 
-                const folders = [];
+                // 基于当前层级列出子文件夹
+                let folders = [];
                 try {
-                    const items = fs.readdirSync(imagesDir);
+                    const items = fs.readdirSync(targetDir);
                     items.forEach(item => {
-                        const itemPath = path.join(imagesDir, item);
+                        const itemPath = path.join(targetDir, item);
                         if (fs.statSync(itemPath).isDirectory()) {
                             folders.push(item);
                         }
                     });
                 } catch (_) { }
 
+                // 当进入回收站时，不展示时间戳等子文件夹
+                try {
+                    if (isTrashFolderParam('local', folder, config)) {
+                        folders = [];
+                    } else if (!folder) {
+                        // 根目录下隐藏 trash
+                        folders = folders.filter(f => String(f).toLowerCase() !== 'trash');
+                    }
+                } catch (_) { }
+
+                // 枚举图片：支持递归
                 let images = [];
                 try {
-                    const items = fs.readdirSync(targetDir);
-                    items.forEach(item => {
-                        const itemPath = path.join(targetDir, item);
-                        const stat = fs.statSync(itemPath);
-                        if (stat.isFile() && /\.(jpg|jpeg|png|gif|webp|svg)$/i.test(item)) {
-                            const relativePath = folder ? `${config.customPath}/${folder}/${item}` : `${config.customPath}/${item}`;
-                            images.push({
-                                name: item,
-                                path: `/${relativePath}`,
-                                url: `${hexo.config.url}/${relativePath}`,
-                                size: stat.size,
-                                lastModified: stat.mtime
-                            });
-                        }
-                    });
+                    const walk = (dir) => {
+                        const items = fs.readdirSync(dir);
+                        items.forEach(item => {
+                            const itemPath = path.join(dir, item);
+                            const stat = fs.statSync(itemPath);
+                            if (stat.isDirectory()) {
+                                if (includeSubfolders) walk(itemPath);
+                            } else if (stat.isFile() && /\.(jpg|jpeg|png|gif|webp|svg)$/i.test(item)) {
+                                const relFromImages = path.relative(imagesDir, itemPath).replace(/\\/g, '/');
+                                // 必须包含 customPath 前缀，确保可通过站点 URL 访问（/images/...）
+                                const relativePath = `${config.customPath}/${relFromImages}`.replace(/\\/g, '/');
+                                images.push({
+                                    name: path.basename(itemPath),
+                                    path: `/${relativePath}`,
+                                    url: `${hexo.config.url}/${relativePath}`,
+                                    size: stat.size,
+                                    lastModified: stat.mtime
+                                });
+                            }
+                        });
+                    };
+                    walk(targetDir);
                 } catch (_) { }
 
                 images.sort((a, b) => b.lastModified - a.lastModified);
@@ -245,23 +267,26 @@ module.exports = function (app, hexo, use, db) {
             const now = Date.now();
 
             if (folder) {
-                // 推导当前 folder 下的子文件夹（基于全部对象，保证空文件夹也可见）
-                allObjects.forEach(obj => {
-                    const key = obj.key;
-                    if (!key.startsWith(folder + '/')) return;
-                    const remaining = key.slice(folder.length + 1);
-                    if (remaining.includes('/')) {
-                        const sub = remaining.split('/')[0];
-                        if (sub) folderSet.add(sub);
-                    }
-                });
+                // 回收站下不展示其子文件夹（时间戳等）
+                if (!isTrashFolderParam(type, folder, config)) {
+                    // 推导当前 folder 下的子文件夹（基于全部对象，保证空文件夹也可见）
+                    allObjects.forEach(obj => {
+                        const key = obj.key;
+                        if (!key.startsWith(folder + '/')) return;
+                        const remaining = key.slice(folder.length + 1);
+                        if (remaining.includes('/')) {
+                            const sub = remaining.split('/')[0];
+                            if (sub) folderSet.add(sub);
+                        }
+                    });
+                }
 
                 // 当前文件夹内的图片
                 imageObjects.forEach(obj => {
                     const key = obj.key;
                     if (!key.startsWith(folder + '/')) return;
                     const remaining = key.slice(folder.length + 1);
-                    if (!remaining.includes('/')) {
+                    if (includeSubfolders || !remaining.includes('/')) {
                         const url = buildObjectUrl(type, key, config);
                         images.push({
                             name: path.basename(key),
@@ -282,6 +307,10 @@ module.exports = function (app, hexo, use, db) {
                         if (top) folderSet.add(top);
                     }
                 });
+                // 顶层隐藏 trash
+                for (const v of Array.from(folderSet)) {
+                    if (String(v).toLowerCase() === 'trash') folderSet.delete(v);
+                }
 
                 // 顶层图片
                 imageObjects.forEach(obj => {
@@ -315,6 +344,166 @@ module.exports = function (app, hexo, use, db) {
         } catch (err) {
             console.error('读取图片列表失败:', err);
             return res.send(500, '读取图片列表失败: ' + err.message);
+        }
+    });
+
+    // 扫描未被引用的图片清单
+    use('images/unused', async function (req, res) {
+        try {
+            const config = getStorageConfig();
+            const type = ((req.query && req.query.storageType) || config.type || 'local').toLowerCase();
+            const folder = (req.query && req.query.folder) || '';
+            const recursive = String((req.query && req.query.recursive) || 'true') === 'true';
+            const includeDrafts = String((req.query && req.query.includeDrafts) || 'true') === 'true';
+            const minAgeDays = parseInt(req.query && req.query.minAgeDays, 10);
+            const effectiveMinAgeDays = Number.isFinite(minAgeDays) ? minAgeDays : 3;
+            const ignorePatternsRaw = (req.query && req.query.ignorePatterns) || '';
+            const ignorePatterns = parseIgnorePatterns(ignorePatternsRaw);
+            const page = parseInt(req.query && req.query.page, 10) || 1;
+            const pageSize = parseInt(req.query && req.query.pageSize, 10) || 200;
+
+            // 回收站不参与扫描
+            if (isTrashFolderParam(type, folder, config)) {
+                return res.done({ code: 0, items: [], total: 0, page, pageSize });
+            }
+
+            const referencedKeys = await collectReferencedImageKeys(hexo, config, type, { includeDrafts });
+            const allObjects = (await listAllObjects(type, config, { folder, recursive }))
+                .filter(obj => !isTrashKey(type, String(obj.key || ''), config));
+            const minAgeMs = effectiveMinAgeDays > 0 ? effectiveMinAgeDays * 24 * 60 * 60 * 1000 : 0;
+            const now = Date.now();
+
+            const unused = [];
+            for (const obj of allObjects) {
+                if (!isImageFile(obj.key)) continue;
+                if (matchesIgnorePatterns(obj.key, ignorePatterns)) continue;
+                if (minAgeMs && obj.lastModified) {
+                    const lm = new Date(obj.lastModified).getTime();
+                    if (now - lm < minAgeMs) continue;
+                }
+                if (!referencedKeys.has(normalizeKeyForCompare(obj.key))) {
+                    const url = buildObjectUrl(type, obj.key, config);
+                    unused.push({ key: obj.key, url, size: Number(obj.size || 0), lastModified: obj.lastModified });
+                }
+            }
+
+            // 排序：修改时间倒序
+            unused.sort((a, b) => new Date(b.lastModified || 0) - new Date(a.lastModified || 0));
+
+            const total = unused.length;
+            const startIndex = (page - 1) * pageSize;
+            const endIndex = startIndex + pageSize;
+            const items = unused.slice(startIndex, endIndex);
+
+            return res.done({ code: 0, items, total, page, pageSize });
+        } catch (err) {
+            console.error('扫描未引用图片失败:', err);
+            return res.send(500, '扫描未引用图片失败: ' + err.message);
+        }
+    });
+
+    // 清理未被引用的图片（支持回收站与选择性删除）
+    use('images/unused/cleanup', async function (req, res) {
+        try {
+            const config = getStorageConfig();
+            const type = ((req.body && req.body.storageType) || config.type || 'local').toLowerCase();
+            const folder = (req.body && req.body.folder) || '';
+            const recursive = Boolean(req.body && req.body.recursive);
+            const includeDrafts = String((req.body && req.body.includeDrafts) ?? 'true') === 'true';
+            const minAgeDays = Number.isFinite(req.body && req.body.minAgeDays) ? Number(req.body.minAgeDays) : 3;
+            const ignorePatterns = parseIgnorePatterns((req.body && req.body.ignorePatterns) || '');
+            const dryRun = Boolean(req.body && req.body.dryRun);
+            const useRecycleBin = (req.body && req.body.useRecycleBin) !== false; // 默认启用
+            const limit = Number.isFinite(req.body && req.body.limit) ? Number(req.body.limit) : 1000;
+            const selectedKeys = Array.isArray(req.body && req.body.keys) ? req.body.keys : null;
+
+            // 阻止针对回收站执行清理
+            if (isTrashFolderParam(type, folder, config)) {
+                return res.send(400, '回收站目录不支持清理操作');
+            }
+
+            let targets = [];
+            if (selectedKeys && selectedKeys.length > 0) {
+                // 直接使用选中项
+                targets = selectedKeys
+                    .map(k => String(k).replace(/^\/+/, ''))
+                    .filter(k => !isTrashKey(type, k, config));
+                if (targets.length === 0) {
+                    return res.send(400, '回收站内的文件不支持清理');
+                }
+            } else {
+                // 重新扫描（与 images/unused 一致）
+                const referencedKeys = await collectReferencedImageKeys(hexo, config, type, { includeDrafts });
+                const allObjects = (await listAllObjects(type, config, { folder, recursive }))
+                    .filter(obj => !isTrashKey(type, String(obj.key || ''), config));
+                const minAgeMs = minAgeDays > 0 ? minAgeDays * 24 * 60 * 60 * 1000 : 0;
+                const now = Date.now();
+                for (const obj of allObjects) {
+                    if (!isImageFile(obj.key)) continue;
+                    if (matchesIgnorePatterns(obj.key, ignorePatterns)) continue;
+                    if (minAgeMs && obj.lastModified) {
+                        const lm = new Date(obj.lastModified).getTime();
+                        if (now - lm < minAgeMs) continue;
+                    }
+                    if (!referencedKeys.has(normalizeKeyForCompare(obj.key))) {
+                        targets.push(obj.key);
+                    }
+                    if (targets.length >= limit) break;
+                }
+            }
+
+            // 执行删除或移动到回收站
+            const summary = { total: targets.length, deleted: 0, movedToTrash: 0, errors: [] };
+            if (dryRun || targets.length === 0) {
+                return res.done({ code: 0, ...summary });
+            }
+
+            if (type === 'local') {
+                const baseImagesDir = path.join(hexo.source_dir, config.customPath);
+                const trashRoot = path.join(baseImagesDir, 'trash', formatTimestampFolder(new Date()));
+                fs.ensureDirSync(trashRoot);
+
+                for (const key of targets) {
+                    const abs = path.join(hexo.source_dir, key);
+                    try {
+                        if (!fs.existsSync(abs)) continue;
+                        if (useRecycleBin) {
+                            const relInsideImages = path.relative(baseImagesDir, abs);
+                            const dst = path.join(trashRoot, relInsideImages);
+                            fs.ensureDirSync(path.dirname(dst));
+                            fs.moveSync(abs, dst, { overwrite: false });
+                            summary.movedToTrash++;
+                        } else {
+                            fs.removeSync(abs);
+                            summary.deleted++;
+                        }
+                    } catch (e) {
+                        summary.errors.push({ key, message: e.message });
+                    }
+                }
+                return res.done({ code: 0, ...summary });
+            }
+
+            // 远程：移动到 trash/时间戳/ 原层级，或直接删除
+            const trashPrefix = `trash/${formatTimestampFolder(new Date())}`;
+            for (const key of targets) {
+                try {
+                    if (useRecycleBin) {
+                        const dstKey = `${trashPrefix}/${key}`.replace(/\\/g, '/');
+                        await moveRemoteObject(type, key, dstKey, config);
+                        summary.movedToTrash++;
+                    } else {
+                        await remoteDeleteObject(type, key, config);
+                        summary.deleted++;
+                    }
+                } catch (e) {
+                    summary.errors.push({ key, message: e.message });
+                }
+            }
+            return res.done({ code: 0, ...summary });
+        } catch (err) {
+            console.error('清理未引用图片失败:', err);
+            return res.send(500, '清理未引用图片失败: ' + err.message);
         }
     });
 
@@ -1358,5 +1547,249 @@ module.exports = function (app, hexo, use, db) {
             return `/${encodeURI(key)}`;
         }
         return `/${encodeURI(key)}`;
+    }
+
+    // === 辅助：扫描与规范化 ===
+    function isTrashFolderParam(type, folder, config) {
+        const f = String(folder || '').replace(/^\/+/, '').toLowerCase();
+        if (!f) return false;
+        if (type === 'local') {
+            return f === 'trash' || f.startsWith('trash/');
+        }
+        return f === 'trash' || f.startsWith('trash/');
+    }
+
+    function isTrashKey(type, key, config) {
+        const k = String(key || '').replace(/^\/+/, '').toLowerCase();
+        // key 在本地是以 images/ 开头
+        if (type === 'local') {
+            const prefix = (config.customPath + '/trash/').toLowerCase();
+            return k.startsWith(prefix) || k === (config.customPath + '/trash').toLowerCase();
+        }
+        // 远程以 trash/ 开头
+        return k.startsWith('trash/') || k === 'trash';
+    }
+    function migrateLocalTrash(imagesDir) {
+        const hidden = path.join(imagesDir, '.trash');
+        const visible = path.join(imagesDir, 'trash');
+        if (!fs.existsSync(hidden)) return; // 无需迁移
+        fs.ensureDirSync(visible);
+        const items = fs.readdirSync(hidden);
+        for (const it of items) {
+            const src = path.join(hidden, it);
+            const dst = path.join(visible, it);
+            if (!fs.existsSync(dst)) {
+                try { fs.moveSync(src, dst, { overwrite: false }); } catch (_) { }
+            }
+        }
+        // 尝试删除空的 .trash
+        try { fs.rmdirSync(hidden); } catch (_) { }
+    }
+    function isImageFile(name) {
+        return /\.(jpg|jpeg|png|gif|webp|svg)$/i.test(name || '');
+    }
+
+    function parseIgnorePatterns(raw) {
+        if (!raw) return [];
+        try {
+            if (Array.isArray(raw)) return raw.filter(Boolean);
+            if (typeof raw === 'string') {
+                // 支持 JSON 数组或 逗号 分隔
+                const t = raw.trim();
+                if (!t) return [];
+                if ((t.startsWith('[') && t.endsWith(']')) || (t.startsWith('"') && t.endsWith('"'))) {
+                    const arr = JSON.parse(t);
+                    return Array.isArray(arr) ? arr.filter(Boolean) : [];
+                }
+                return t.split(',').map(s => s.trim()).filter(Boolean);
+            }
+        } catch (_) { }
+        return [];
+    }
+
+    function matchesIgnorePatterns(key, patterns) {
+        if (!patterns || patterns.length === 0) return false;
+        for (const p of patterns) {
+            try {
+                // 简单通配符: * -> .*
+                const re = new RegExp('^' + String(p).replace(/[.+^${}()|\[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$', 'i');
+                if (re.test(key)) return true;
+                // 子串匹配兜底
+                if (key.toLowerCase().includes(String(p).toLowerCase())) return true;
+            } catch (_) { }
+        }
+        return false;
+    }
+
+    function normalizeKeyForCompare(key) {
+        return String(key || '').replace(/^\/+/, '').replace(/\\/g, '/');
+    }
+
+    function formatTimestampFolder(d) {
+        const pad = (n) => (n < 10 ? '0' + n : '' + n);
+        return (
+            d.getFullYear() +
+            pad(d.getMonth() + 1) +
+            pad(d.getDate()) +
+            pad(d.getHours()) +
+            pad(d.getMinutes()) +
+            pad(d.getSeconds())
+        );
+    }
+
+    async function listAllObjects(type, config, opts) {
+        const folder = (opts && opts.folder) || '';
+        const recursive = Boolean(opts && opts.recursive);
+        if (type === 'local') {
+            const imagesDir = path.join(hexo.source_dir, config.customPath);
+            const baseDir = folder ? path.join(imagesDir, folder) : imagesDir;
+            fs.ensureDirSync(baseDir);
+            const out = [];
+            const walk = (dir) => {
+                const items = fs.readdirSync(dir);
+                for (const it of items) {
+                    const p = path.join(dir, it);
+                    const st = fs.statSync(p);
+                    if (st.isDirectory()) {
+                        if (recursive) walk(p);
+                    } else if (st.isFile()) {
+                        const rel = path.relative(imagesDir, p).replace(/\\/g, '/');
+                        out.push({ key: rel, size: st.size, lastModified: st.mtime });
+                    }
+                }
+            };
+            walk(baseDir);
+            // 映射到统一 key（以 images/ 为前缀）
+            return out.map(o => ({ key: (config.customPath + '/' + o.key).replace(/\\/g, '/'), size: o.size, lastModified: o.lastModified }));
+        }
+        // 远程：直接使用对象 key
+        const all = await listRemoteObjects(type, config);
+        if (!folder) return all;
+        const prefix = folder.endsWith('/') ? folder : folder + '/';
+        return all.filter(o => o.key.startsWith(prefix));
+    }
+
+    async function collectReferencedImageKeys(hexo, config, type, opts) {
+        const includeDrafts = (opts && opts.includeDrafts) !== false;
+        const referenced = new Set();
+        // 提取所有源内容文件
+        const sourceDir = path.resolve(hexo.source_dir);
+        const candidates = [];
+        const tryPush = (p) => { if (fs.existsSync(p)) candidates.push(p); };
+        tryPush(path.join(sourceDir, '_posts'));
+        if (includeDrafts) tryPush(path.join(sourceDir, '_drafts'));
+        // 也扫描 source 根下其他 md/html
+        tryPush(sourceDir);
+
+        const exts = new Set(['.md', '.markdown', '.mdx', '.html', '.htm', '.yml', '.yaml']);
+        const files = [];
+        const walk = (dir) => {
+            const items = fs.readdirSync(dir);
+            for (const it of items) {
+                const p = path.join(dir, it);
+                const st = fs.statSync(p);
+                if (st.isDirectory()) {
+                    // 跳过 images 目录本身以提升性能
+                    if (path.resolve(p) === path.resolve(sourceDir, config.customPath)) continue;
+                    // 跳过 .trash
+                    if (it === 'trash') continue;
+                    walk(p);
+                } else if (st.isFile()) {
+                    if (exts.has(path.extname(it).toLowerCase())) files.push(p);
+                }
+            }
+        };
+        for (const c of candidates) {
+            if (fs.existsSync(c)) walk(c);
+        }
+
+        const localBase = config.customPath.replace(/^\/+/, '');
+        const stripDomains = [];
+        if (type === 'local' && hexo && hexo.config && hexo.config.url) stripDomains.push(String(hexo.config.url));
+        if (type === 'aliyun' && config.aliyun && config.aliyun.domain) stripDomains.push(String(config.aliyun.domain));
+        if (type === 'qiniu' && config.qiniu && config.qiniu.domain) stripDomains.push(String(config.qiniu.domain));
+        if (type === 'tencent' && config.tencent && config.tencent.domain) stripDomains.push(String(config.tencent.domain));
+
+        for (const f of files) {
+            let content = '';
+            try { content = fs.readFileSync(f, 'utf8'); } catch (_) { continue; }
+            // 统一处理 front-matter + 正文
+            const refs = extractImageReferences(content);
+            for (let u of refs) {
+                const key = normalizeUrlToKey(u, { localBase, stripDomains, type });
+                if (key) referenced.add(normalizeKeyForCompare(key));
+            }
+        }
+
+        return referenced;
+    }
+
+    function extractImageReferences(text) {
+        if (!text) return [];
+        const out = new Set();
+        // markdown image: ![alt](url)
+        const mdImg = /!\[[^\]]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g; let m;
+        while ((m = mdImg.exec(text)) !== null) { out.add(m[1]); }
+        // html <img src="...">
+        const imgTag = /<img\s+[^>]*src=["']([^"']+)["'][^>]*>/gi; let m2;
+        while ((m2 = imgTag.exec(text)) !== null) { out.add(m2[1]); }
+        // srcset
+        const srcset = /srcset=["']([^"']+)["']/gi; let m3;
+        while ((m3 = srcset.exec(text)) !== null) {
+            const parts = String(m3[1]).split(',');
+            for (const p of parts) {
+                const u = p.trim().split(' ')[0]; if (u) out.add(u);
+            }
+        }
+        // css url(...)
+        const cssUrl = /url\(([^)]+)\)/gi; let m4;
+        while ((m4 = cssUrl.exec(text)) !== null) {
+            out.add(String(m4[1]).replace(/["']/g, ''));
+        }
+        // common front-matter keys (rough regex)
+        const fm = /^(?:---[\s\S]*?---)/m.exec(text);
+        if (fm && fm[0]) {
+            const fmText = fm[0];
+            const kv = /(cover|banner|image|thumbnail)\s*:\s*([^\n\r]+)/gi; let m5;
+            while ((m5 = kv.exec(fmText)) !== null) {
+                const v = String(m5[2]).trim().replace(/["']/g, '');
+                if (v) out.add(v);
+            }
+            const arr = /(images|photos):\s*\[([^\]]*)\]/gi; let m6;
+            while ((m6 = arr.exec(fmText)) !== null) {
+                const list = String(m6[2]).split(',').map(s => s.trim().replace(/["']/g, ''));
+                for (const v of list) if (v) out.add(v);
+            }
+        }
+        return Array.from(out);
+    }
+
+    function normalizeUrlToKey(url, options) {
+        if (!url) return '';
+        let u = String(url).trim();
+        // 去掉 query/hash
+        u = u.split('#')[0];
+        u = u.split('?')[0];
+        try { u = decodeURI(u); } catch (_) { }
+        // 去掉域名
+        if (options && Array.isArray(options.stripDomains)) {
+            for (const d of options.stripDomains) {
+                if (!d) continue;
+                const dd = String(d).replace(/\/$/, '');
+                if (u.startsWith(dd + '/')) { u = u.slice(dd.length + 1); break; }
+            }
+        }
+        // 去掉开头的斜杠
+        u = u.replace(/^\/+/, '');
+        u = u.replace(/\\/g, '/');
+        if (!u) return '';
+        // 若是相对路径且不含自定义 images 前缀，则原样返回（无法归一）
+        if (options && options.localBase) {
+            const base = options.localBase.replace(/^\/+/, '').replace(/\\/g, '/');
+            if (u.startsWith(base + '/')) {
+                return u; // images/xxx
+            }
+        }
+        return u;
     }
 };
