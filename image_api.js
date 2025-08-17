@@ -1267,7 +1267,10 @@ module.exports = function (app, hexo, use, db) {
 
         try {
             const result = await client.put(objectName, imageData);
-            const url = domain || result.url;
+            const base = domain ? String(domain).replace(/\/$/, '') : '';
+            const url = base
+                ? `${base}/${encodeURI(objectName)}`
+                : (result && result.url ? result.url : `/${encodeURI(objectName)}`);
 
             res.done({
                 code: 0,
@@ -1441,7 +1444,10 @@ module.exports = function (app, hexo, use, db) {
                 throw err;
             }
 
-            const url = domain || `https://${bucket}.cos.${region}.myqcloud.com/${objectName}`;
+            const base = domain ? String(domain).replace(/\/$/, '') : '';
+            const url = base
+                ? `${base}/${encodeURI(objectName)}`
+                : `https://${bucket}.cos.${region}.myqcloud.com/${encodeURI(objectName)}`;
             res.done({
                 code: 0,
                 url: url,
