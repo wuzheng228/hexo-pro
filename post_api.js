@@ -67,7 +67,7 @@ module.exports = function (app, hexo, use) {
         const newSource = '_posts/' + originalFilename;
         const oldPath = path.join(hexo.source_dir, post.source);
         const newDir = path.join(hexo.source_dir, path.dirname(newSource));
-        const newPath = path.join(newDir, originalFilename);
+        let newPath = path.join(newDir, originalFilename);
 
         // 使用 fse 确保目录存在
         fse.ensureDir(newDir, err => {
@@ -75,10 +75,27 @@ module.exports = function (app, hexo, use) {
 
             // 使用 fse 移动文件到新路径下
             fse.move(oldPath, newPath, { overwrite: false }, async err => {
-                if (err) return res.send(500, `File operation failed: ${err.message}`);
+                if (err) {
+                    // 如果源和目标相同或目标已存在，采用重命名策略避免报错
+                    const isSame = /must not be the same/i.test(err.message || '');
+                    const exists = /dest already exists|EEXIST/i.test(err.message || '') || fse.pathExistsSync(newPath);
+                    if (!(isSame || exists)) {
+                        return res.send(500, `File operation failed: ${err.message}`);
+                    }
+
+                    const ext = path.extname(originalFilename);
+                    const base = path.basename(originalFilename, ext);
+                    const renamed = `${base} (${Date.now()})${ext}`;
+                    newPath = path.join(newDir, renamed);
+                    try {
+                        await fse.move(oldPath, newPath, { overwrite: false });
+                    } catch (e2) {
+                        return res.send(500, `File operation failed: ${e2.message}`);
+                    }
+                }
 
                 // 更新数据模型中的 post 源路径
-                post.source = newSource;
+                post.source = path.join('_posts', path.basename(newPath)).replace(/\\/g, '/');
                 post = _.cloneDeep(post);
 
                 // 刷新 Hexo 数据
@@ -172,6 +189,24 @@ module.exports = function (app, hexo, use) {
 
                     // 刷新 Hexo 数据
                     hexo.source.process().then(() => {
+                        // 写入回收站记录（使用全局数据库管理器）
+                        try {
+                            const databaseManager = require('./database-manager');
+                            if (databaseManager && databaseManager.isReady()) {
+                                const { recycleDb } = databaseManager.getDatabases();
+                                if (recycleDb) {
+                                    recycleDb.insert({
+                                        type: 'post',
+                                        title: post.title,
+                                        permalink: post.permalink,
+                                        originalSource: post.source,
+                                        discardedPath: newSource.replace(/\\/g, '/'),
+                                        isDraft: post.source && post.source.indexOf('_draft') === 0,
+                                        deletedAt: new Date(),
+                                    }, function () { });
+                                }
+                            }
+                        } catch (_) { }
                         res.done(addIsDraft(post))
                     }).catch(e => {
                         console.error(e, e.stack)
@@ -475,7 +510,7 @@ module.exports = function (app, hexo, use) {
 
     })
 
-    use('post/update/:id', function(req, res, next) {
+    use('post/update/:id', function (req, res, next) {
         let id = req.params.id
         if (!req.body) {
             return res.send(400, 'No post body given')
