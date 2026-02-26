@@ -8,6 +8,7 @@ const deploy_api = require('./deploy_api'); // 添加部署API
 const settings_api = require('./settings_api'); // 添加设置API
 const auth_api = require('./auth_api'); // 添加认证API
 const recycle_api = require('./recycle_api'); // 回收站API
+const ai_api = require('./ai_api'); // AI 代理API
 const CircularJSON = require('circular-json');
 const crypto = require('crypto');
 const { expressjwt: jwt } = require('express-jwt'); // 确保引入 express-jwt
@@ -31,6 +32,20 @@ module.exports = async function (app, hexo) { // 将导出函数改为 async
 
     app.use('/hexopro/api', bodyParser.json({ limit: '50mb' }));
     app.use('/hexopro/api', bodyParser.urlencoded({ extended: true }));
+
+    // 允许开发环境下从不同端口（如 8004 的前端 dev server）直接访问，避免通过 webpack 代理导致 SSE 被缓冲
+    app.use('/hexopro/api', function (req, res, next) {
+        // 简单允许所有来源，局域网开发足够安全；如果需要可以限制为 http://127.0.0.1:8004
+        res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
+        res.setHeader('Access-Control-Allow-Credentials', 'true');
+        res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+        if (req.method === 'OPTIONS') {
+            res.statusCode = 200;
+            return res.end();
+        }
+        next();
+    });
 
     var use = function (path, fn) {
         // 检查路径中是否包含参数（如 :id）
@@ -197,8 +212,11 @@ module.exports = async function (app, hexo) { // 将导出函数改为 async
             `${apiBasePath}/settings/skip-setup`, // 添加跳过设置API到排除列表
             `${apiBasePath}/auth/status`, // 添加认证状态检查路径到排除列表
             `${apiBasePath}/desktop/status`, // 添加桌面端状态API到排除列表
-            `${apiBasePath}/desktop/auth-check`, // 添加桌面端认证检查API到排除列表  
-            `${apiBasePath}/desktop/save-token` // 添加桌面端保存token API到排除列表
+            `${apiBasePath}/desktop/auth-check`, // 添加桌面端认证检查API到排除列表
+            `${apiBasePath}/desktop/save-token`, // 添加桌面端保存token API到排除列表
+            `${apiBasePath}/ai/chat`, // AI 聊天代理接口（解决 CORS 问题）
+            `${apiBasePath}/ai/settings`, // AI 设置接口
+            `${apiBasePath}/ai/settings/save` // AI 设置保存接口
         ];
 
 
@@ -233,6 +251,7 @@ module.exports = async function (app, hexo) { // 将导出函数改为 async
         settings_api(app, hexo, use, db); // 注册设置API
         recycle_api(app, hexo, use, db); // 注册回收站API
         auth_api(app, hexo, use); // 注册认证API
+        ai_api(app, hexo, use, db); // 注册 AI 代理API
 
 
         app.use((err, req, res, next) => {
