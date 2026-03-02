@@ -1,32 +1,56 @@
 const jwt = require('jsonwebtoken');
 const axios = require('axios');
 
+const DEFAULT_SYSTEM_PROMPT = `你是一位专业的 Hexo 博客创作助手。你的任务是帮助用户撰写、润色和优化博客文章。
+
+请遵循以下原则：
+1. 使用清晰、专业的写作风格
+2. 根据用户需求提供结构化的内容建议
+3. 支持 Markdown 格式输出
+4. 若用户提供上下文（如标题、大纲），请围绕其展开
+5. 回复简洁实用，避免冗长开场白`;
+
 module.exports = function (app, hexo, use, db) {
-    // AI 聊天代理接口 - 解决前端直接调用 AI API 的 CORS 问题
+    // AI 聊天代理接口 - 从后端读取配置，解决 CORS 问题
     use('ai/chat', async function (req, res) {
         console.log('[Hexo Pro AI Proxy]: 收到请求');
 
-        const { url, apiKey, model, messages, max_tokens, temperature, top_p, stream } = req.body;
+        const { messages, max_tokens, temperature, top_p, stream } = req.body;
+        const { settingsDb } = db;
 
-        if (!url || !apiKey || !model) {
-            console.error('[Hexo Pro AI Proxy]: 缺少必要参数', { url: !!url, apiKey: !!apiKey, model: !!model });
+        if (!messages || !Array.isArray(messages)) {
+            return res.done({ code: 400, msg: '缺少 messages 参数' });
+        }
+
+        const settings = await new Promise((resolve, reject) => {
+            settingsDb.findOne({ type: 'ai' }, (err, doc) => {
+                if (err) reject(err);
+                else resolve(doc);
+            });
+        });
+
+        if (!settings || !settings.url || !settings.apiKey || !settings.model) {
             return res.done({
                 code: 400,
-                msg: '缺少必要的 AI 配置参数'
+                msg: '请先在设置中配置 AI（API URL、API Key、模型）'
             });
         }
 
-        // 确保 stream 是布尔值
+        const { url, apiKey, model } = settings;
+        const systemPrompt = (settings.systemPrompt || '').trim();
+        const finalMessages = systemPrompt
+            ? [{ role: 'system', content: systemPrompt }, ...messages]
+            : messages;
+
         const isStream = stream === true || stream === 'true';
         console.log('[Hexo Pro AI Proxy]: stream:', isStream, 'url:', url);
 
-        // 构建请求体
         const requestData = {
             model,
-            messages,
-            max_tokens: max_tokens || 4000,
-            temperature: temperature || 0.7,
-            top_p: top_p || 0.9,
+            messages: finalMessages,
+            max_tokens: max_tokens || settings.maxTokens || 4000,
+            temperature: temperature ?? settings.temperature ?? 0.7,
+            top_p: top_p ?? settings.topP ?? 0.9,
             stream: isStream
         };
 
@@ -147,15 +171,18 @@ module.exports = function (app, hexo, use, db) {
                         enableThinking: false,
                         maxTokens: 4000,
                         temperature: 0.7,
-                        topP: 0.9
+                        topP: 0.9,
+                        systemPrompt: DEFAULT_SYSTEM_PROMPT
                     }
                 });
             }
 
-            // 返回设置，但隐藏 apiKey
             const safeSettings = { ...settings };
             if (safeSettings.apiKey) {
                 safeSettings.apiKey = '****' + safeSettings.apiKey.slice(-4);
+            }
+            if (safeSettings.systemPrompt == null || safeSettings.systemPrompt === '') {
+                safeSettings.systemPrompt = DEFAULT_SYSTEM_PROMPT;
             }
 
             res.done({
@@ -168,7 +195,7 @@ module.exports = function (app, hexo, use, db) {
     // 保存 AI 设置接口
     use('ai/settings/save', function (req, res) {
         const { settingsDb } = db;
-        const { url, apiKey, model, enableThinking, maxTokens, temperature, topP } = req.body;
+        const { url, apiKey, model, enableThinking, maxTokens, temperature, topP, systemPrompt } = req.body;
 
         const settingsData = {
             type: 'ai',
@@ -179,6 +206,7 @@ module.exports = function (app, hexo, use, db) {
             maxTokens: maxTokens || 4000,
             temperature: temperature || 0.7,
             topP: topP || 0.9,
+            systemPrompt: systemPrompt != null ? String(systemPrompt) : '',
             updatedAt: new Date()
         };
 
