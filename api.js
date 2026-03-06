@@ -207,6 +207,8 @@ module.exports = async function (app, hexo) { // 将导出函数改为 async
         const apiBasePath = `${rootPrefix}hexopro/api`.replace('//', '/'); // API基础路径
         const unlessPaths = [
             `${apiBasePath}/login`,
+            `${apiBasePath}/auth/security-question`, // 获取安全问题，无需token
+            `${apiBasePath}/auth/reset-password`, // 忘记密码重置接口，无需token
             `${apiBasePath}/settings/check-first-use`,
             `${apiBasePath}/settings/register`,
             `${apiBasePath}/settings/skip-setup`, // 添加跳过设置API到排除列表

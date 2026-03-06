@@ -13,26 +13,46 @@ module.exports = function (app, hexo, use, db) {
 
     const deployStatusDb = db.deployStatusDb;
 
+    // 脱敏辅助函数
+    function maskSensitiveConfig(config) {
+        const masked = {
+            ...config,
+            token: config.token ? '******' : ''
+        };
+        if (masked.cloudflare) {
+            masked.cloudflare = {
+                ...masked.cloudflare,
+                apiToken: masked.cloudflare.apiToken ? '******' : ''
+            };
+        }
+        return masked;
+    }
+
     // 获取部署配置
     use('deploy/config', function (req, res) {
         try {
             const configPath = path.join(hexo.base_dir, 'deploy_config.json');
             let config = {
+                deployType: 'github',
                 repository: '',
                 branch: 'main',
                 message: 'Site updated: {{ now("YYYY-MM-DD HH:mm:ss") }}',
                 token: '',
+                cloudflare: {
+                    accountId: '',
+                    projectName: '',
+                    apiToken: ''
+                },
                 lastDeployTime: ''
             };
 
             if (fs.existsSync(configPath)) {
                 try {
                     const savedConfig = JSON.parse(fs.readFileSync(configPath));
-                    // 不返回敏感信息如 token
-                    config = {
-                        ...savedConfig,
-                        token: savedConfig.token ? '******' : ''
-                    };
+                    config = maskSensitiveConfig({
+                        ...config,
+                        ...savedConfig
+                    });
                 } catch (e) {
                     console.error('解析部署配置文件失败:', e);
                 }
@@ -65,27 +85,34 @@ module.exports = function (app, hexo, use, db) {
                 }
             }
 
-            // 合并配置，保留现有 token（如果新配置中没有提供）
+            // 合并配置，保留现有敏感信息（如果新配置中没有提供）
             const newConfig = {
                 ...existingConfig,
                 ...req.body,
-                // 如果新配置中的 token 是占位符，则保留原来的 token
                 token: req.body.token === '******' ? existingConfig.token : req.body.token
             };
+
+            // 合并 cloudflare 配置，保留 apiToken
+            if (req.body.cloudflare) {
+                const existingCf = existingConfig.cloudflare || {};
+                newConfig.cloudflare = {
+                    ...existingCf,
+                    ...req.body.cloudflare,
+                    apiToken: req.body.cloudflare.apiToken === '******'
+                        ? existingCf.apiToken
+                        : req.body.cloudflare.apiToken
+                };
+            }
 
             // 保存到文件
             fs.writeFileSync(configPath, JSON.stringify(newConfig, null, 2));
 
-            // 更新 _config.yml 文件中的 deploy 配置
-            updateHexoConfig(hexo.base_dir, newConfig);
+            // 仅 github 类型时更新 _config.yml 中的 deploy 配置
+            if (!newConfig.deployType || newConfig.deployType === 'github') {
+                updateHexoConfig(hexo.base_dir, newConfig);
+            }
 
-            // 返回配置（隐藏 token）
-            const safeConfig = {
-                ...newConfig,
-                token: newConfig.token ? '******' : ''
-            };
-
-            res.done(safeConfig);
+            res.done(maskSensitiveConfig(newConfig));
         } catch (error) {
             console.error('保存部署配置失败:', error);
             res.send(500, '保存部署配置失败');
@@ -120,8 +147,17 @@ module.exports = function (app, hexo, use, db) {
                     return res.send(500, '解析部署配置失败');
                 }
 
-                if (!config.repository) {
+                const deployType = config.deployType || 'github';
+
+                if (deployType === 'github' && !config.repository) {
                     return res.send(400, '缺少仓库地址');
+                }
+
+                if (deployType === 'cloudflare-pages') {
+                    const cf = config.cloudflare || {};
+                    if (!cf.accountId || !cf.projectName || !cf.apiToken) {
+                        return res.send(400, '缺少 Cloudflare Pages 配置（Account ID / Project Name / API Token）');
+                    }
                 }
 
                 // 获取跳过生成的设置
@@ -549,21 +585,45 @@ module.exports = function (app, hexo, use, db) {
             addLog('deploy.git.success');
         };
 
+        // Cloudflare Pages Direct Upload 部署函数
+        const cloudflarePagesDeploy = async (baseDir, config) => {
+            const publicDir = path.join(baseDir, 'public');
+            const cf = config.cloudflare;
+
+            if (!fs.existsSync(publicDir)) {
+                throw new Error('public 目录不存在，请先运行 hexo generate');
+            }
+
+            addLog('deploy.cloudflare.preparing');
+
+            const env = {
+                ...process.env,
+                CLOUDFLARE_ACCOUNT_ID: cf.accountId,
+                CLOUDFLARE_API_TOKEN: cf.apiToken
+            };
+
+            addLog('deploy.cloudflare.uploading');
+            await runCommand('npx', [
+                'wrangler', 'pages', 'deploy', publicDir,
+                '--project-name', cf.projectName
+            ], { cwd: baseDir, env });
+
+            addLog('deploy.cloudflare.success');
+        };
+
         // 开始部署流程
+        const deployType = config.deployType || 'github';
+
         (async () => {
             try {
                 if (skipGenerate) {
-                    // 跳过生成模式
                     addLog('deploy.skip.generate.mode');
-                    
                     await updateStatus({ stage: 'deploying', progress: 30 });
                 } else {
-                    // 标准模式：清理
                     await updateStatus({ stage: 'cleaning', progress: 10 });
                     addLog('deploy.cleaning');
                     await runCommand('npx', ['hexo', 'clean'], { cwd: baseDir });
 
-                    // 生成
                     await updateStatus({ stage: 'generating', progress: 30 });
                     addLog('deploy.generating');
                     await runCommand('npx', ['hexo', 'generate'], { cwd: baseDir });
@@ -571,15 +631,17 @@ module.exports = function (app, hexo, use, db) {
                     await updateStatus({ stage: 'deploying', progress: 60 });
                 }
 
-                // 自定义 Git 部署
-                addLog('deploy.deploying');
-                await customGitDeploy(baseDir, config, skipGenerate);
+                if (deployType === 'cloudflare-pages') {
+                    addLog('deploy.cloudflare.deploying');
+                    await cloudflarePagesDeploy(baseDir, config);
+                } else {
+                    addLog('deploy.deploying');
+                    await customGitDeploy(baseDir, config, skipGenerate);
+                }
 
-                // 完成
                 const now = new Date();
                 const formattedTime = formatDateTime(now);
 
-                // 更新配置文件中的最后部署时间
                 config.lastDeployTime = now.toISOString();
                 fs.writeFileSync(
                     path.join(baseDir, 'deploy_config.json'),
