@@ -31,6 +31,12 @@ module.exports = function (app, hexo, use, db) {
                 apiToken: masked.cloudflare.apiToken ? '******' : ''
             };
         }
+        if (masked.edgeone) {
+            masked.edgeone = {
+                ...masked.edgeone,
+                apiToken: masked.edgeone.apiToken ? '******' : ''
+            };
+        }
         return masked;
     }
 
@@ -49,6 +55,11 @@ module.exports = function (app, hexo, use, db) {
                     accountId: '',
                     projectName: '',
                     apiToken: ''
+                },
+                edgeone: {
+                    projectName: '',
+                    apiToken: '',
+                    env: 'production'
                 },
                 lastDeployTime: ''
             };
@@ -114,6 +125,18 @@ module.exports = function (app, hexo, use, db) {
                 };
             }
 
+            // 合并 edgeone 配置，保留 apiToken
+            if (req.body.edgeone) {
+                const existingEo = existingConfig.edgeone || {};
+                newConfig.edgeone = {
+                    ...existingEo,
+                    ...req.body.edgeone,
+                    apiToken: req.body.edgeone.apiToken === '******'
+                        ? existingEo.apiToken
+                        : req.body.edgeone.apiToken
+                };
+            }
+
             // 保存到文件
             fs.writeFileSync(configPath, JSON.stringify(newConfig, null, 2));
 
@@ -172,6 +195,16 @@ module.exports = function (app, hexo, use, db) {
                                 : req.body.config.cloudflare.apiToken
                         };
                     }
+                    if (req.body.config.edgeone) {
+                        const existingEo = existingConfig.edgeone || {};
+                        newConfig.edgeone = {
+                            ...existingEo,
+                            ...req.body.config.edgeone,
+                            apiToken: req.body.config.edgeone.apiToken === '******'
+                                ? existingEo.apiToken
+                                : req.body.config.edgeone.apiToken
+                        };
+                    }
                     try {
                         fs.writeFileSync(configPath, JSON.stringify(newConfig, null, 2));
                         if (!newConfig.deployType || newConfig.deployType === 'github') {
@@ -201,7 +234,7 @@ module.exports = function (app, hexo, use, db) {
                 if (!Array.isArray(deployTargets)) {
                     deployTargets = [config.deployType || 'github'];
                 }
-                deployTargets = deployTargets.filter(t => t === 'github' || t === 'cloudflare-pages');
+                deployTargets = deployTargets.filter(t => t === 'github' || t === 'cloudflare-pages' || t === 'edgeone-pages');
                 if (deployTargets.length === 0) {
                     return res.send(400, '请指定至少一个部署目标');
                 }
@@ -213,6 +246,12 @@ module.exports = function (app, hexo, use, db) {
                     const cf = config.cloudflare || {};
                     if (!cf.accountId || !cf.projectName || !cf.apiToken) {
                         return res.send(400, '缺少 Cloudflare Pages 配置（Account ID / Project Name / API Token）');
+                    }
+                }
+                if (deployTargets.includes('edgeone-pages')) {
+                    const eo = config.edgeone || {};
+                    if (!eo.projectName || !eo.apiToken) {
+                        return res.send(400, '缺少 EdgeOne Pages 配置（项目名称 / API Token）');
                     }
                 }
 
@@ -663,8 +702,35 @@ module.exports = function (app, hexo, use, db) {
             addLog('deploy.cloudflare.success');
         };
 
+        // EdgeOne Pages Direct Upload 部署函数
+        const edgeonePagesDeploy = async (baseDir, config) => {
+            const publicDir = path.join(baseDir, 'public');
+            const eo = config.edgeone;
+
+            if (!fs.existsSync(publicDir)) {
+                throw new Error('public 目录不存在，请先运行 hexo generate');
+            }
+
+            addLog('deploy.edgeone.preparing');
+
+            const args = [
+                'edgeone', 'pages', 'deploy', publicDir,
+                '-n', eo.projectName,
+                '-t', eo.apiToken
+            ];
+            if (eo.env && eo.env === 'preview') {
+                args.push('-e', 'preview');
+            }
+
+            addLog('deploy.edgeone.uploading');
+            await runCommand('npx', args, { cwd: baseDir });
+
+            addLog('deploy.edgeone.success');
+        };
+
         // 是否跳过生成：仅当仅部署 GitHub 且 skipGenerate 时为 true
         const needGenerate = deployTargets.includes('cloudflare-pages') ||
+            deployTargets.includes('edgeone-pages') ||
             (deployTargets.includes('github') && !skipGenerate);
         const actualSkipGenerate = skipGenerate && deployTargets.length === 1 && deployTargets[0] === 'github';
 
@@ -691,6 +757,9 @@ module.exports = function (app, hexo, use, db) {
                     if (target === 'cloudflare-pages') {
                         addLog('deploy.cloudflare.deploying');
                         await cloudflarePagesDeploy(baseDir, config);
+                    } else if (target === 'edgeone-pages') {
+                        addLog('deploy.edgeone.deploying');
+                        await edgeonePagesDeploy(baseDir, config);
                     } else {
                         addLog('deploy.deploying');
                         await customGitDeploy(baseDir, config, actualSkipGenerate);
