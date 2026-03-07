@@ -9,6 +9,7 @@ const settings_api = require('./settings_api'); // 添加设置API
 const auth_api = require('./auth_api'); // 添加认证API
 const recycle_api = require('./recycle_api'); // 回收站API
 const ai_api = require('./ai_api'); // AI 代理API
+const theme_api = require('./theme_api'); // 主题市场API
 const CircularJSON = require('circular-json');
 const crypto = require('crypto');
 const { expressjwt: jwt } = require('express-jwt'); // 确保引入 express-jwt
@@ -254,6 +255,7 @@ module.exports = async function (app, hexo) { // 将导出函数改为 async
         recycle_api(app, hexo, use, db); // 注册回收站API
         auth_api(app, hexo, use); // 注册认证API
         ai_api(app, hexo, use, db); // 注册 AI 代理API
+        theme_api(app, hexo, use); // 注册主题市场API
 
 
         app.use((err, req, res, next) => {
