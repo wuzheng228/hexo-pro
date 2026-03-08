@@ -38,18 +38,20 @@ function buildPrompt(segment, language = 'zh', current, total) {
       types: 'input(文本框), textarea(多行文本), number(数字), switch(开关), color(颜色), select(下拉)',
       rules: `严格规则:
 1. 只为有实际值的叶子字段（如 title: xxx, enable: true）生成 schema
-2. 绝对不要为以下内容生成 schema:
+2. 对于“无值但下面跟着整段注释模板”的对象 key（例如 menu: 下方全是注释配置），也可以生成一个块级 schema，key 就是该对象路径本身，例如 "menu"
+3. 绝对不要为以下内容生成 schema:
    - 对象/字典类型的父级 key（如 menu:, site_info: 后面跟着子项的）
    - 数组/列表类型的 key
    - 空值 key（值为空或只有子项）
-3. 每个 schema 必须包含 "type" 和 "label"
-4. 可选字段: "placeholder"(提示), "description"(描述), "options"(下拉选项)
-5. type 只能是: input, textarea, number, switch, color, select
-6. label 使用中文，简洁易懂
-7. key 必须用完整点号路径：嵌套字段如 mainTone 下的 enable，key 为 "mainTone.enable"（不是 "enable"）
-8. 仅返回 JSON 对象，不要包含任何说明文字或 markdown 代码块`,
+4. 每个 schema 必须包含 "type" 和 "label"
+5. 可选字段: "placeholder"(提示), "description"(描述), "options"(下拉选项)
+6. type 只能是: input, textarea, number, switch, color, select, collapse
+7. 注释模板块请使用 type: "collapse"，并补充 description
+8. label 使用中文，简洁易懂
+9. key 必须用完整点号路径：嵌套字段如 mainTone 下的 enable，key 为 "mainTone.enable"（不是 "enable"）
+10. 仅返回 JSON 对象，不要包含任何说明文字或 markdown 代码块`,
       example: `正确输出示例（注意嵌套用完整路径）:
-{"title": {"type": "input", "label": "网站标题"}, "mainTone.enable": {"type": "switch", "label": "启用主色调"}, "mainTone.mode": {"type": "select", "label": "主色调模式", "options": [{"value": "api", "label": "API"}, {"value": "cdn", "label": "CDN"}]}}`,
+{"title": {"type": "input", "label": "网站标题"}, "mainTone.enable": {"type": "switch", "label": "启用主色调"}, "mainTone.mode": {"type": "select", "label": "主色调模式", "options": [{"value": "api", "label": "API"}, {"value": "cdn", "label": "CDN"}]}, "menu": {"type": "collapse", "label": "导航菜单", "description": "可启用默认菜单模板"}}`,
     },
     en: {
       instruction: 'Analyze the **leaf fields** in the following YAML config and output a JSON object as schema metadata.',
@@ -57,14 +59,16 @@ function buildPrompt(segment, language = 'zh', current, total) {
       types: 'input(text), textarea(multiline), number(numeric), switch(toggle), color(color picker), select(dropdown)',
       rules: `Strict Rules:
 1. Only generate schema for leaf fields with actual values
-2. NEVER generate schema for: parent keys of objects, array keys, empty keys
-3. Each schema must have "type" and "label"
-4. Optional: "placeholder", "description", "options"
-5. type must be: input, textarea, number, switch, color, select
-6. key use dot path like "mainTone.enable"
-7. Return ONLY the JSON object, no explanations or markdown`,
+2. For empty object keys followed by a fully commented configuration template, you may generate block metadata for that key itself
+3. NEVER generate schema for: normal parent keys of objects, array keys, unrelated empty keys
+4. Each schema must have "type" and "label"
+5. Optional: "placeholder", "description", "options"
+6. type must be: input, textarea, number, switch, color, select, collapse
+7. commented template blocks should use type "collapse"
+8. key use dot path like "mainTone.enable"
+9. Return ONLY the JSON object, no explanations or markdown`,
       example: `Correct output:
-{"title": {"type": "input", "label": "Site Title"}, "comments": {"type": "switch", "label": "Enable Comments"}}`,
+{"title": {"type": "input", "label": "Site Title"}, "comments": {"type": "switch", "label": "Enable Comments"}, "menu": {"type": "collapse", "label": "Navigation Menu", "description": "Template block that can be enabled"}}`,
     },
     fr: {
       instruction: 'Analysez les **champs feuilles** et sortez un objet JSON comme métadonnées de schéma.',
@@ -111,7 +115,7 @@ async function generateSchemaForSegment(segment, aiSettings, language, current, 
       {
         role: 'system',
         content:
-          'You output JSON schema for YAML leaf fields. Return ONLY a valid JSON object. Keys are dot paths like "group.key". Each value has type (input/textarea/number/switch/color/select) and label. No markdown.',
+          'You output JSON schema for YAML fields. Mostly annotate leaf fields, but you may also annotate fully-commented template blocks on empty object keys using type "collapse". Return ONLY a valid JSON object. Keys are dot paths like "group.key". Each value has type (input/textarea/number/switch/color/select/collapse) and label. No markdown.',
       },
       {
         role: 'user',
