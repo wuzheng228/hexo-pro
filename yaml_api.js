@@ -3,8 +3,20 @@ var fs = require('hexo-fs');
 var fse = require('fs-extra');
 var yml = require('js-yaml');
 const { v4: uuidv4 } = require('uuid');
-// 新增：引入 exec 用于执行命令行
-const { exec } = require('child_process');
+
+/**
+ * 清理 public 目录，确保静态文件重新生成
+ * @param {string} publicDir - public 目录路径
+ */
+async function cleanPublicDir(publicDir) {
+  try {
+    if (fs.existsSync(publicDir)) {
+      await fse.emptyDir(publicDir);
+    }
+  } catch (err) {
+    console.error('[Hexo Pro] 清理 public 目录失败:', err.message);
+  }
+}
 
 module.exports = function (app, hexo, use) {
   // 获取 YAML 文件列表
@@ -152,9 +164,21 @@ module.exports = function (app, hexo, use) {
           if (isThemeConfigFile) {
             const newThemeConfigContent = fse.readFileSync(fullPath, 'utf-8');
             const newThemeConfig = yml.load(newThemeConfigContent);
-            // 只更新主题配置，不重新初始化整个 Hexo
+            // 同时更新 hexo.config.theme_config 和 hexo.theme.config
+            // hexo.config.theme_config 是 Hexo 用于覆盖主题配置的源
+            hexo.config.theme_config = Object.assign({}, hexo.config.theme_config, newThemeConfig);
             hexo.theme.config = Object.assign({}, hexo.theme.config, newThemeConfig);
             hexo.log.info('主题配置已在内存中重新加载。');
+          }
+
+          // 清除 Hexo 内部缓存，确保配置更新生效
+          if (isThemeConfigFile || isSiteConfigFile) {
+            if (hexo.locals && hexo.locals.invalidate) {
+              hexo.locals.invalidate();
+              hexo.log.info('Hexo locals 缓存已清除');
+            }
+            // 触发 generateBefore 事件来清除 fragment_cache
+            hexo.emit('generateBefore');
           }
 
         } catch (err) {
@@ -165,18 +189,24 @@ module.exports = function (app, hexo, use) {
         // 先响应客户端，告知文件已保存成功
         res.done({
           success: true,
-          message: `${configType}配置文件已保存成功，正在后台重新生成站点，请稍后刷新页面查看效果。`
+          message: `${configType}配置文件已保存成功，正在后台重新生成站点，请稍后刷新页面查看效果。`,
+          tip: '如果页面未更新，请尝试强制刷新浏览器 (Ctrl+F5 或 Cmd+Shift+R)',
         });
 
-        // 2. 在后台异步执行命令行方式重新生成站点
-        exec('hexo clean && hexo g', { cwd: hexo.base_dir }, (error, stdout, stderr) => {
-          if (error) {
-            hexo.log.error(`重新生成站点失败: ${error.message}`);
-            hexo.log.error(stderr);
-            // 由于已经响应客户端，这里只记录日志，不再发送响应
-          } else {
-            hexo.log.info(`${configType}配置更新后，站点重新生成成功。`);
-            hexo.log.info(stdout);
+        // 2. 触发 Hexo 重新生成（使用当前进程实例）
+        setImmediate(async () => {
+          hexo.log.info(`[Hexo Pro] ${configType}配置已更新，正在重新生成站点...`);
+          try {
+            // 清除 public 目录，确保静态文件（CSS/JS）重新生成
+            const publicDir = path.join(hexo.base_dir, 'public');
+            await cleanPublicDir(publicDir);
+            hexo.log.info('[Hexo Pro] public 目录已清理');
+
+            // 重新生成站点
+            await hexo._generate({ cache: false });
+            hexo.log.info(`[Hexo Pro] ${configType}配置更新后，站点重新生成成功`);
+          } catch (err) {
+            hexo.log.error(`[Hexo Pro] 站点重新生成失败:`, err.message);
           }
         });
 
