@@ -219,7 +219,8 @@ module.exports = async function (app, hexo) { // 将导出函数改为 async
             `${apiBasePath}/desktop/save-token`, // 添加桌面端保存token API到排除列表
             `${apiBasePath}/ai/chat`, // AI 聊天代理接口（解决 CORS 问题）
             `${apiBasePath}/ai/settings`, // AI 设置接口
-            `${apiBasePath}/ai/settings/save` // AI 设置保存接口
+            `${apiBasePath}/ai/settings/save`, // AI 设置保存接口
+            `${apiBasePath}/theme/schema/generate`, // 主题 Schema 生成接口
         ];
 
 
@@ -255,7 +256,7 @@ module.exports = async function (app, hexo) { // 将导出函数改为 async
         recycle_api(app, hexo, use, db); // 注册回收站API
         auth_api(app, hexo, use); // 注册认证API
         ai_api(app, hexo, use, db); // 注册 AI 代理API
-        theme_api(app, hexo, use); // 注册主题市场API
+        theme_api(app, hexo, use, db); // 注册主题市场API
 
 
         app.use((err, req, res, next) => {

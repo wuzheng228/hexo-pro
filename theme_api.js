@@ -3,6 +3,52 @@ const fs = require('hexo-fs');
 const fse = require('fs-extra');
 const { exec } = require('child_process');
 const yaml = require('js-yaml');
+const {
+  segmentConfig,
+  generateSchemaForSegment,
+  mergeSegmentResults,
+  countSchemaFields,
+  calculateHash,
+} = require('./schema_generator')
+
+function getSchemaFilePath(baseDir, themeId) {
+  return path.join(baseDir, `_config.${themeId}.schema.json`)
+}
+
+/**
+ * 从 schema 文件中提取纯 schema（去掉 _meta）
+ */
+function extractSchemaFromFileContent(fullObj) {
+  if (!fullObj || typeof fullObj !== 'object') return null
+  const { _meta, ...schema } = fullObj
+  return Object.keys(schema).length > 0 ? schema : null
+}
+
+/**
+ * 读取 schema 文件，若 _meta.configHash 匹配则返回 schema
+ */
+function readSchemaFileWithMeta(baseDir, themeId) {
+  const schemaPath = getSchemaFilePath(baseDir, themeId)
+  if (!fs.existsSync(schemaPath)) return null
+  try {
+    const content = fse.readFileSync(schemaPath, 'utf-8')
+    return JSON.parse(content)
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 写入 schema 文件（含 _meta）
+ */
+function writeSchemaFileWithMeta(baseDir, themeId, schema, configHash, language) {
+  const schemaPath = getSchemaFilePath(baseDir, themeId)
+  const fullObj = {
+    _meta: { configHash, language, generatedAt: new Date().toISOString() },
+    ...schema,
+  }
+  fse.writeFileSync(schemaPath, JSON.stringify(fullObj, null, 2), 'utf-8')
+}
 
 // 内置主题列表
 const BUILTIN_THEMES = [
@@ -32,7 +78,7 @@ function execPromise(command, options = {}) {
   });
 }
 
-module.exports = function (app, hexo, use) {
+module.exports = function (app, hexo, use, db) {
   // 获取内置主题列表
   use('theme/list', function (req, res) {
     try {
@@ -252,5 +298,240 @@ module.exports = function (app, hexo, use) {
       installed: fs.existsSync(themePath),
       isCurrent,
     });
+  });
+
+  // 获取主题 Schema（从独立 JSON 文件）
+  use('theme/schema', function (req, res) {
+    const themeId = req.query.themeId || req.body?.themeId
+    if (!themeId) {
+      return res.send(400, '缺少主题ID')
+    }
+
+    const theme = BUILTIN_THEMES.find((t) => t.id === themeId)
+    if (!theme) {
+      return res.send(404, '主题不存在')
+    }
+
+    const baseDir = hexo.base_dir
+    const schemaPath = getSchemaFilePath(baseDir, themeId)
+
+    try {
+      const fullObj = readSchemaFileWithMeta(baseDir, themeId)
+      if (!fullObj) {
+        return res.done({ schema: null, hasSchema: false })
+      }
+      const schema = extractSchemaFromFileContent(fullObj)
+      res.done({ schema: schema || null, hasSchema: !!schema })
+    } catch (error) {
+      hexo.log.error('读取 Schema 失败:', error)
+      res.done({ schema: null, hasSchema: false })
+    }
+  })
+
+  // 保存主题 Schema 到独立 JSON 文件（含 _meta 用于缓存校验）
+  use('theme/schema/save', function (req, res) {
+    if (req.method !== 'POST') return
+
+    const { themeId, schema, language = 'zh' } = req.body || {}
+    if (!themeId || schema === undefined) {
+      return res.send(400, '缺少主题ID或 Schema')
+    }
+
+    const theme = BUILTIN_THEMES.find((t) => t.id === themeId)
+    if (!theme) {
+      return res.send(404, '主题不存在')
+    }
+
+    const baseDir = hexo.base_dir
+    const configPath = path.join(baseDir, theme.configFile)
+
+    try {
+      const schemaObj = typeof schema === 'string' ? JSON.parse(schema) : schema
+      let configHash = ''
+      if (fs.existsSync(configPath)) {
+        const configContent = fse.readFileSync(configPath, 'utf-8')
+        configHash = calculateHash(configContent)
+      }
+      writeSchemaFileWithMeta(baseDir, themeId, schemaObj, configHash, language)
+      res.done({ success: true, message: 'Schema 已保存' })
+    } catch (error) {
+      hexo.log.error('保存 Schema 失败:', error)
+      res.send(500, '保存 Schema 失败')
+    }
+  })
+
+  // 生成主题配置 Schema（输出独立 JSON，不修改 YAML）
+  use('theme/schema/generate', function (req, res) {
+    if (req.method !== 'POST') return;
+
+    const { themeId, language = 'zh', forceRegenerate = false } = req.body || {};
+
+    if (!themeId) {
+      return res.send(400, '缺少主题ID');
+    }
+
+    const theme = BUILTIN_THEMES.find((t) => t.id === themeId);
+    if (!theme) {
+      return res.send(404, '主题不存在');
+    }
+
+    // 设置 SSE 响应头
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    if (typeof res.flushHeaders === 'function') {
+      res.flushHeaders();
+    }
+
+    (async () => {
+      try {
+        const baseDir = hexo.base_dir
+        const configPath = path.join(baseDir, theme.configFile)
+
+        // 检查配置文件是否存在
+        if (!fs.existsSync(configPath)) {
+          res.write(`data: ${JSON.stringify({ type: 'error', message: '主题配置文件不存在' })}\n\n`);
+          return res.end();
+        }
+
+        const configContent = fse.readFileSync(configPath, 'utf-8');
+        const configHash = calculateHash(configContent);
+
+        // 尝试从 schema 文件读取缓存（强制重新生成时跳过）
+        if (!forceRegenerate) {
+          const fileCache = readSchemaFileWithMeta(baseDir, themeId);
+          if (fileCache && fileCache._meta && fileCache._meta.configHash === configHash && fileCache._meta.language === language) {
+            const schemaFromFile = extractSchemaFromFileContent(fileCache);
+            if (schemaFromFile && Object.keys(schemaFromFile).length > 0) {
+              res.write(
+                `data: ${JSON.stringify({
+                  type: 'start',
+                  totalChunks: 1,
+                  configSize: configContent.length,
+                  cached: true,
+                })}\n\n`
+              );
+              const fieldCount = countSchemaFields(schemaFromFile);
+              res.write(
+                `data: ${JSON.stringify({
+                  type: 'complete',
+                  fullResult: configContent,
+                  schema: schemaFromFile,
+                  summary: `已为 ${fieldCount} 个字段生成 schema (从缓存)`,
+                })}\n\n`
+              );
+              return res.end();
+            }
+          }
+        }
+
+        // 发送初始化消息
+        const segments = segmentConfig(configContent, 5000);
+        res.write(
+          `data: ${JSON.stringify({
+            type: 'start',
+            totalChunks: segments.length,
+            configSize: configContent.length,
+          })}\n\n`
+        );
+
+        // 获取 AI 配置（从数据库读取）
+        let aiSettings = null;
+        if (db && db.settingsDb) {
+          aiSettings = await new Promise((resolve, reject) => {
+            db.settingsDb.findOne({ type: 'ai' }, (err, doc) => {
+              if (err) resolve(null);
+              else resolve(doc);
+            });
+          });
+        }
+
+        if (!aiSettings || !aiSettings.url || !aiSettings.apiKey) {
+          res.write(`data: ${JSON.stringify({ type: 'error', message: 'AI 配置不完整' })}\n\n`);
+          return res.end();
+        }
+
+        const results = [];
+
+        // 处理每个段
+        for (let i = 0; i < segments.length; i++) {
+          try {
+            res.write(
+              `data: ${JSON.stringify({
+                type: 'chunk_processing',
+                current: i + 1,
+                total: segments.length,
+                status: `正在分析第 ${i + 1}/${segments.length} 段...`,
+              })}\n\n`
+            );
+
+            const segmentResult = await generateSchemaForSegment(
+              segments[i],
+              aiSettings,
+              language,
+              i + 1,
+              segments.length
+            );
+
+            results.push(segmentResult);
+
+            res.write(
+              `data: ${JSON.stringify({
+                type: 'chunk_result',
+                chunk: i + 1,
+                result: segmentResult.substring(0, 100) + '...',
+              })}\n\n`
+            );
+          } catch (segmentError) {
+            hexo.log.error(`[Schema] 第 ${i + 1} 段处理失败:`, segmentError.message);
+            res.write(
+              `data: ${JSON.stringify({
+                type: 'error',
+                message: `第 ${i + 1} 段处理失败: ${segmentError.message}`,
+              })}\n\n`
+            );
+            return res.end();
+          }
+        }
+
+        // 合并结果
+        const schemaObj = mergeSegmentResults(results);
+        if (typeof schemaObj !== 'object' || Object.keys(schemaObj).length === 0) {
+          res.write(
+            `data: ${JSON.stringify({
+              type: 'error',
+              message: 'AI 未返回有效的 schema',
+            })}\n\n`
+          );
+          return res.end();
+        }
+        const fieldCount = countSchemaFields(schemaObj);
+
+        // 保存到 schema 文件（含 _meta 用于下次缓存校验）
+        writeSchemaFileWithMeta(baseDir, themeId, schemaObj, configHash, language);
+
+        // fullResult 为原始 YAML（不修改），schema 为独立 JSON
+        res.write(
+          `data: ${JSON.stringify({
+            type: 'complete',
+            fullResult: configContent,
+            schema: schemaObj,
+            summary: `已为 ${fieldCount} 个字段生成 schema`,
+          })}\n\n`
+        );
+
+        res.end();
+      } catch (error) {
+        hexo.log.error('[Schema Generator] 错误:', error);
+        res.write(
+          `data: ${JSON.stringify({
+            type: 'error',
+            message: error.message || '生成 Schema 失败',
+          })}\n\n`
+        );
+        res.end();
+      }
+    })();
   });
 };

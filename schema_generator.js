@@ -3,109 +3,100 @@ const fs = require('hexo-fs')
 const axios = require('axios')
 
 /**
- * 分段处理配置文件
+ * 按行边界分段，避免在行中间截断导致 YAML 损坏
  */
 function segmentConfig(yamlContent, chunkSize = 5000) {
   const segments = []
-  for (let i = 0; i < yamlContent.length; i += chunkSize) {
-    segments.push(yamlContent.substring(i, i + chunkSize))
+  const lines = yamlContent.split('\n')
+  let currentChunk = []
+  let currentLength = 0
+
+  for (const line of lines) {
+    const lineWithNewline = line + '\n'
+    if (currentLength + lineWithNewline.length > chunkSize && currentChunk.length > 0) {
+      segments.push(currentChunk.join('\n'))
+      currentChunk = []
+      currentLength = 0
+    }
+    currentChunk.push(line)
+    currentLength += lineWithNewline.length
+  }
+  if (currentChunk.length > 0) {
+    segments.push(currentChunk.join('\n'))
   }
   return segments
 }
 
 /**
- * 构建 AI 提示词
+ * 构建 AI 提示词 - 输出独立的 schema JSON，不修改 YAML
  */
 function buildPrompt(segment, language = 'zh', current, total) {
   const langConfig = {
     zh: {
-      instruction: '为以下YAML配置字段添加JSON schema注释元数据。',
-      format: '# schema: {type: "input", label: "字段中文标签", placeholder: "提示文本"}',
-      types: 'input(文本框), textarea(多行文本), number(数字), switch(开关), color(颜色), select(下拉), email(邮箱), url(URL)',
-      rules: `规则:
-1. 为每个非注释行添加一个schema注释行，格式: # schema: {...}
-2. 在 schema 注释中必须包含: type, label 两个字段
-3. 可选字段: placeholder(提示), description(描述), group(分组), options(下拉选项数组)
-4. 根据值的类型推断合适的字段类型
-5. label 使用中文，简洁易懂，不超过20字
-6. 仅返回修改后的YAML，不要包含其他说明
-7. 保留所有原始值完全不变
-8. 对象类型字段用 group 字段分组`,
-      example: `示例输出:
-# schema: {type: "input", label: "网站标题", placeholder: "输入网站标题"}
-title: My Hexo Blog
-
-# schema: {type: "select", label: "主题语言", options: [{value: "en", label: "English"}, {value: "zh", label: "简体中文"}]}
-language: en`
+      instruction: '分析以下 YAML 配置中的**叶子字段**，输出一个 JSON 对象作为 schema 元数据。',
+      format: '{"path.to.key": {"type": "input", "label": "字段中文标签", "placeholder": "提示文本"}}',
+      types: 'input(文本框), textarea(多行文本), number(数字), switch(开关), color(颜色), select(下拉)',
+      rules: `严格规则:
+1. 只为有实际值的叶子字段（如 title: xxx, enable: true）生成 schema
+2. 绝对不要为以下内容生成 schema:
+   - 对象/字典类型的父级 key（如 menu:, site_info: 后面跟着子项的）
+   - 数组/列表类型的 key
+   - 空值 key（值为空或只有子项）
+3. 每个 schema 必须包含 "type" 和 "label"
+4. 可选字段: "placeholder"(提示), "description"(描述), "options"(下拉选项)
+5. type 只能是: input, textarea, number, switch, color, select
+6. label 使用中文，简洁易懂
+7. key 必须用完整点号路径：嵌套字段如 mainTone 下的 enable，key 为 "mainTone.enable"（不是 "enable"）
+8. 仅返回 JSON 对象，不要包含任何说明文字或 markdown 代码块`,
+      example: `正确输出示例（注意嵌套用完整路径）:
+{"title": {"type": "input", "label": "网站标题"}, "mainTone.enable": {"type": "switch", "label": "启用主色调"}, "mainTone.mode": {"type": "select", "label": "主色调模式", "options": [{"value": "api", "label": "API"}, {"value": "cdn", "label": "CDN"}]}}`,
     },
     en: {
-      instruction: 'Add JSON schema comment metadata to the following YAML configuration fields.',
-      format: '# schema: {type: "input", label: "Field Label", placeholder: "Hint text"}',
-      types: 'input(text), textarea(multiline), number(numeric), switch(toggle), color(color picker), select(dropdown), email(email), url(URL)',
-      rules: `Rules:
-1. Add one schema comment line for each non-comment line: # schema: {...}
-2. Each schema must include: type and label fields
-3. Optional fields: placeholder(hint), description, group(grouping), options(dropdown options array)
-4. Infer appropriate field type from value
-5. Label in English, concise and clear, max 20 chars
-6. Return only modified YAML, no explanation
-7. Keep all original values unchanged
-8. Use group field for object type fields`,
-      example: `Example output:
-# schema: {type: "input", label: "Site Title", placeholder: "Enter site title"}
-title: My Hexo Blog
-
-# schema: {type: "select", label: "Theme Language", options: [{value: "en", label: "English"}, {value: "zh", label: "Chinese"}]}
-language: en`
+      instruction: 'Analyze the **leaf fields** in the following YAML config and output a JSON object as schema metadata.',
+      format: '{"path.to.key": {"type": "input", "label": "Field Label", "placeholder": "Hint text"}}',
+      types: 'input(text), textarea(multiline), number(numeric), switch(toggle), color(color picker), select(dropdown)',
+      rules: `Strict Rules:
+1. Only generate schema for leaf fields with actual values
+2. NEVER generate schema for: parent keys of objects, array keys, empty keys
+3. Each schema must have "type" and "label"
+4. Optional: "placeholder", "description", "options"
+5. type must be: input, textarea, number, switch, color, select
+6. key use dot path like "mainTone.enable"
+7. Return ONLY the JSON object, no explanations or markdown`,
+      example: `Correct output:
+{"title": {"type": "input", "label": "Site Title"}, "comments": {"type": "switch", "label": "Enable Comments"}}`,
     },
     fr: {
-      instruction: 'Ajouter des métadonnées de commentaires de schéma JSON à la configuration YAML suivante.',
-      format: '# schema: {type: "input", label: "Étiquette du champ", placeholder: "Texte d\'indice"}',
-      types: 'input(texte), textarea(multiligne), number(numérique), switch(bouton), color(couleur), select(déroulant), email(email), url(URL)',
-      rules: `Règles:
-1. Ajouter une ligne de commentaire schema pour chaque ligne non-commentaire: # schema: {...}
-2. Chaque schema doit inclure: type et label
-3. Champs optionnels: placeholder(indice), description, group(groupage), options(tableau d\'options)
-4. Déduire le type de champ approprié de la valeur
-5. Étiquette en français, concis et clair, max 20 caractères
-6. Retourner uniquement YAML modifié, pas d\'explication
-7. Conserver toutes les valeurs d\'origine inchangées
-8. Utiliser le champ group pour les champs de type objet`,
-      example: `Exemple de sortie:
-# schema: {type: "input", label: "Titre du site", placeholder: "Entrez le titre du site"}
-title: My Hexo Blog
-
-# schema: {type: "select", label: "Langue du thème", options: [{value: "en", label: "English"}, {value: "zh", label: "Chinois"}]}
-language: en`
-    }
+      instruction: 'Analysez les **champs feuilles** et sortez un objet JSON comme métadonnées de schéma.',
+      format: '{"path.to.key": {"type": "input", "label": "Étiquette"}}',
+      types: 'input, textarea, number, switch, color, select',
+      rules: `Règles: type et label requis. Retournez UNIQUEMENT le JSON.`,
+      example: `{"title": {"type": "input", "label": "Titre du site"}}`,
+    },
   }
 
   const config = langConfig[language] || langConfig.zh
 
-  return `You are an expert at converting YAML configuration to user-friendly forms with schema metadata.
-
-${config.instruction}
+  return `You are a YAML schema expert. ${config.instruction}
 
 Segment ${current}/${total}:
 \`\`\`yaml
 ${segment}
 \`\`\`
 
-Task: Add schema comment for each field. The schema comment must be in valid JSON format.
-
 ${config.rules}
+
+Format: ${config.format}
+
+Supported types: ${config.types}
 
 ${config.example}
 
-Supported field types: ${config.types}
-
-${config.format}
-
-Return ONLY the modified YAML with schema comments, preserving original structure exactly.`
+CRITICAL: Return ONLY a valid JSON object. No markdown, no code block wrapper, no explanations.`
 }
 
 /**
- * 调用 AI 生成 Schema
+ * 调用 AI 生成 Schema JSON
  */
 async function generateSchemaForSegment(segment, aiSettings, language, current, total) {
   if (!aiSettings || !aiSettings.url || !aiSettings.apiKey) {
@@ -119,14 +110,15 @@ async function generateSchemaForSegment(segment, aiSettings, language, current, 
     messages: [
       {
         role: 'system',
-        content: 'You are a YAML schema expert. Convert YAML fields to user-friendly form configurations with schema metadata. Return ONLY valid YAML with schema comments.',
+        content:
+          'You output JSON schema for YAML leaf fields. Return ONLY a valid JSON object. Keys are dot paths like "group.key". Each value has type (input/textarea/number/switch/color/select) and label. No markdown.',
       },
       {
         role: 'user',
         content: prompt,
       },
     ],
-    temperature: aiSettings.temperature || 0.7,
+    temperature: aiSettings.temperature || 0.3,
     max_tokens: aiSettings.maxTokens || 4000,
     top_p: aiSettings.topP || 0.9,
   }
@@ -155,94 +147,53 @@ async function generateSchemaForSegment(segment, aiSettings, language, current, 
 }
 
 /**
- * 清理和验证 Schema 结果
+ * 解析 AI 返回的 JSON
  */
-function cleanSchemaResult(result) {
-  // 移除可能的代码块标记
-  let cleaned = result
-    .replace(/^```yaml\n?/, '')
-    .replace(/\n?```$/, '')
+function parseSchemaJson(raw) {
+  let cleaned = raw
+    .replace(/^```json\s*/i, '')
+    .replace(/^```\s*/i, '')
+    .replace(/\s*```$/i, '')
     .trim()
-  return cleaned
+  return JSON.parse(cleaned)
 }
 
 /**
- * 合并多个段的结果
+ * 合并多个段的 schema JSON
  */
 function mergeSegmentResults(results) {
-  return results
-    .map(r => cleanSchemaResult(r))
-    .join('\n')
-    .trim()
-}
-
-/**
- * 统计 Schema 字段数
- */
-function countSchemaFields(yamlContent) {
-  const matches = yamlContent.match(/# schema:/g)
-  return matches ? matches.length : 0
-}
-
-/**
- * 检查缓存
- */
-async function getSchemaFromCache(db, themeId, language) {
-  if (!db || !db.themeSchemaCache) {
-    return null
-  }
-
-  return new Promise((resolve, reject) => {
-    db.themeSchemaCache.findOne({ themeId, language }, (err, doc) => {
-      if (err) {
-        resolve(null)
-      } else {
-        resolve(doc)
+  const merged = {}
+  for (const r of results) {
+    try {
+      const obj = parseSchemaJson(r)
+      if (obj && typeof obj === 'object') {
+        Object.assign(merged, obj)
       }
-    })
-  })
+    } catch (e) {
+      console.warn('[Schema] 解析段结果失败:', e.message)
+    }
+  }
+  return merged
 }
 
 /**
- * 保存缓存
+ * 统计 Schema 字段数（排除 _meta）
  */
-async function saveSchemaToCache(db, themeId, language, schema, configHash) {
-  if (!db || !db.themeSchemaCache) {
-    return
-  }
-
-  const cacheEntry = {
-    themeId,
-    language,
-    schema,
-    configHash,
-    generatedAt: new Date(),
-  }
-
-  return new Promise((resolve, reject) => {
-    db.themeSchemaCache.update(
-      { themeId, language },
-      cacheEntry,
-      { upsert: true },
-      (err) => {
-        if (err) {
-          console.error('[Schema Cache] 保存失败:', err)
-        }
-        resolve()
-      }
-    )
-  })
+function countSchemaFields(schemaObj) {
+  if (typeof schemaObj !== 'object') return 0
+  const keys = Object.keys(schemaObj).filter((k) => k !== '_meta')
+  return keys.length
 }
 
 /**
- * 计算文件哈希 (简单版本)
+ * 计算文件哈希
  */
 function calculateHash(content) {
   let hash = 0
   for (let i = 0; i < content.length; i++) {
     const char = content.charCodeAt(i)
     hash = (hash << 5) - hash + char
-    hash = hash & hash // Convert to 32bit integer
+    hash = hash & hash
   }
   return Math.abs(hash).toString(36)
 }
@@ -250,10 +201,8 @@ function calculateHash(content) {
 module.exports = {
   segmentConfig,
   generateSchemaForSegment,
-  cleanSchemaResult,
+  parseSchemaJson,
   mergeSegmentResults,
   countSchemaFields,
-  getSchemaFromCache,
-  saveSchemaToCache,
   calculateHash,
 }
