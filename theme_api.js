@@ -78,6 +78,18 @@ const BUILTIN_THEMES = [
     configFile: '_config.anzhiyu.yml',
     themeDir: 'anzhiyu',
   },
+  {
+    id: 'butterfly',
+    name: 'Butterfly',
+    description: '一款美观且功能强大的 Hexo 主题，支持丰富的文章样式与多种扩展功能',
+    author: 'jerryc127',
+    repo: 'https://github.com/jerryc127/hexo-theme-butterfly.git',
+    branch: 'master',
+    installType: 'git',
+    dependencies: ['hexo-renderer-pug', 'hexo-renderer-stylus'],
+    configFile: '_config.butterfly.yml',
+    themeDir: 'butterfly',
+  },
 ];
 
 function execPromise(command, options = {}) {
