@@ -395,6 +395,9 @@ module.exports = function (app, hexo, use, db) {
       fse.writeFileSync(configPath, yaml.dump(config), 'utf-8');
       hexo.log.info(`[Theme] 已切换主题为 ${theme.themeDir}`);
 
+      // 更新内存中的配置，确保后续查询能获取正确的当前主题
+      hexo.config.theme = theme.themeDir;
+
       // 复制主题配置到根目录作为覆盖配置（如果不存在）
       const themeConfigSrc = path.join(themePath, '_config.yml');
       const themeConfigDest = path.join(baseDir, theme.configFile);
