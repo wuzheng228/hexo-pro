@@ -347,6 +347,77 @@ module.exports = function (app, hexo, use, db) {
     });
   });
 
+  // 切换主题
+  use('theme/switch', function (req, res) {
+    if (req.method !== 'POST') return;
+
+    const { themeId } = req.body || {};
+    if (!themeId) {
+      return res.send(400, '缺少主题ID');
+    }
+
+    const theme = BUILTIN_THEMES.find((t) => t.id === themeId);
+    if (!theme) {
+      return res.send(404, '主题不存在');
+    }
+
+    const baseDir = hexo.base_dir;
+    const themePath = path.join(baseDir, 'themes', theme.themeDir);
+
+    // 检查主题是否已安装
+    if (!fs.existsSync(themePath)) {
+      return res.send(400, '主题未安装，请先安装主题');
+    }
+
+    try {
+      // 更新 _config.yml 的 theme 字段
+      const configPath = path.join(baseDir, '_config.yml');
+      let configContent = fse.readFileSync(configPath, 'utf-8');
+      let config;
+      try {
+        config = yaml.load(configContent);
+      } catch (e) {
+        hexo.log.error('解析 _config.yml 失败:', e);
+        return res.send(500, '解析站点配置失败');
+      }
+
+      // 检查是否已经是当前主题
+      if (config.theme === theme.themeDir) {
+        return res.done({
+          success: true,
+          message: '已经是当前主题',
+          themeDir: theme.themeDir,
+          needRestart: false,
+        });
+      }
+
+      config.theme = theme.themeDir;
+      fse.writeFileSync(configPath, yaml.dump(config), 'utf-8');
+      hexo.log.info(`[Theme] 已切换主题为 ${theme.themeDir}`);
+
+      // 复制主题配置到根目录作为覆盖配置（如果不存在）
+      const themeConfigSrc = path.join(themePath, '_config.yml');
+      const themeConfigDest = path.join(baseDir, theme.configFile);
+      let configCopied = false;
+      if (fs.existsSync(themeConfigSrc) && !fs.existsSync(themeConfigDest)) {
+        fse.copyFileSync(themeConfigSrc, themeConfigDest);
+        hexo.log.info(`[Theme] 已创建覆盖配置文件 ${theme.configFile}`);
+        configCopied = true;
+      }
+
+      res.done({
+        success: true,
+        message: '主题切换成功',
+        themeDir: theme.themeDir,
+        configCopied,
+        needRestart: true, // 标记需要重启才能生效
+      });
+    } catch (error) {
+      hexo.log.error('[Theme] 切换失败:', error.message);
+      res.send(500, error.message || '主题切换失败');
+    }
+  });
+
   // 获取主题 Schema（从独立 JSON 文件）
   use('theme/schema', function (req, res) {
     const themeId = req.query.themeId || req.body?.themeId
