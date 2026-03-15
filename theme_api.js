@@ -225,21 +225,7 @@ module.exports = function (app, hexo, use, db) {
           await execPromise(`npm install ${theme.dependencies.join(' ')} --save`, { cwd: baseDir });
         }
 
-        // 3. 更新 _config.yml 的 theme 字段
-        const configPath = path.join(baseDir, '_config.yml');
-        let configContent = fse.readFileSync(configPath, 'utf-8');
-        let config;
-        try {
-          config = yaml.load(configContent);
-        } catch (e) {
-          hexo.log.error('解析 _config.yml 失败:', e);
-          return res.send(500, '解析站点配置失败');
-        }
-        config.theme = theme.themeDir;
-        fse.writeFileSync(configPath, yaml.dump(config), 'utf-8');
-        hexo.log.info(`[Theme] 已设置主题为 ${theme.themeDir}`);
-
-        // 4. 复制主题配置到根目录作为覆盖配置
+        // 3. 复制主题配置到根目录作为覆盖配置
         const themeConfigSrc = path.join(themePath, '_config.yml');
         const themeConfigDest = path.join(baseDir, theme.configFile);
         if (fs.existsSync(themeConfigSrc) && !fs.existsSync(themeConfigDest)) {
@@ -441,11 +427,17 @@ module.exports = function (app, hexo, use, db) {
 
       // 检查是否已经是当前主题
       if (config.theme === theme.themeDir) {
+        // _config.yml 已经是目标主题，但当前运行中的 hexo.config 可能尚未同步（常见于安装后未重启）
+        const needRestart = hexo.config.theme !== theme.themeDir;
+        if (needRestart) {
+          hexo.config.theme = theme.themeDir;
+        }
+
         return res.done({
           success: true,
-          message: '已经是当前主题',
+          message: needRestart ? '主题已切换，重启后生效' : '已经是当前主题',
           themeDir: theme.themeDir,
-          needRestart: false,
+          needRestart,
         });
       }
 
