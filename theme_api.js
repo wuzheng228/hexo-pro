@@ -152,6 +152,184 @@ function execPromise(command, options = {}) {
   });
 }
 
+const SNAPSHOT_STORE_DIR = '.hexo-pro/theme-config-snapshots'
+const MAX_THEME_CONFIG_SNAPSHOTS = 30
+
+function getThemeSnapshotDir(baseDir) {
+  return path.join(baseDir, SNAPSHOT_STORE_DIR)
+}
+
+function getThemeSnapshotFilePath(baseDir, themeId) {
+  return path.join(getThemeSnapshotDir(baseDir), `${themeId}.json`)
+}
+
+function toSnapshotMeta(snapshot) {
+  if (!snapshot || typeof snapshot !== 'object') return null
+  const { content, ...meta } = snapshot
+  return meta
+}
+
+function readThemeConfigSnapshots(baseDir, themeId) {
+  const snapshotPath = getThemeSnapshotFilePath(baseDir, themeId)
+  if (!fs.existsSync(snapshotPath)) return []
+  try {
+    const parsed = JSON.parse(fse.readFileSync(snapshotPath, 'utf-8'))
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter((item) => item && typeof item.content === 'string')
+  } catch {
+    return []
+  }
+}
+
+function writeThemeConfigSnapshots(baseDir, themeId, snapshots) {
+  const dir = getThemeSnapshotDir(baseDir)
+  fse.ensureDirSync(dir)
+  const snapshotPath = getThemeSnapshotFilePath(baseDir, themeId)
+  fse.writeFileSync(snapshotPath, JSON.stringify(snapshots, null, 2), 'utf-8')
+}
+
+function createThemeConfigSnapshot(baseDir, themeId, content, options = {}) {
+  if (typeof content !== 'string') return null
+  const { source = 'manual', note = '' } = options
+  const snapshots = readThemeConfigSnapshots(baseDir, themeId)
+  const hash = calculateHash(content)
+
+  if (snapshots[0] && snapshots[0].hash === hash) {
+    return null
+  }
+
+  const createdAt = new Date().toISOString()
+  const snapshot = {
+    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    themeId,
+    createdAt,
+    source,
+    note: String(note).slice(0, 120),
+    hash,
+    size: Buffer.byteLength(content, 'utf-8'),
+    content,
+  }
+
+  const next = [snapshot, ...snapshots].slice(0, MAX_THEME_CONFIG_SNAPSHOTS)
+  writeThemeConfigSnapshots(baseDir, themeId, next)
+  return toSnapshotMeta(snapshot)
+}
+
+function readThemeConfigContent(baseDir, theme) {
+  const configPath = path.join(baseDir, theme.configFile)
+  const themeConfigPath = path.join(baseDir, 'themes', theme.themeDir, '_config.yml')
+
+  if (fs.existsSync(configPath)) {
+    return fse.readFileSync(configPath, 'utf-8')
+  }
+  if (fs.existsSync(themeConfigPath)) {
+    return fse.readFileSync(themeConfigPath, 'utf-8')
+  }
+  return null
+}
+
+function ensureThemeConfigFile(baseDir, theme) {
+  const configPath = path.join(baseDir, theme.configFile)
+  if (fs.existsSync(configPath)) return configPath
+
+  const themePath = path.join(baseDir, 'themes', theme.themeDir)
+  const themeConfigSrc = path.join(themePath, '_config.yml')
+  if (fs.existsSync(themeConfigSrc)) {
+    fse.copyFileSync(themeConfigSrc, configPath)
+  }
+  return configPath
+}
+
+function isThemeInstalled(baseDir, theme) {
+  const themePath = path.join(baseDir, 'themes', theme.themeDir)
+  return fs.existsSync(themePath)
+}
+
+function getThemeById(themeId) {
+  return BUILTIN_THEMES.find((t) => t.id === themeId)
+}
+
+function formatYamlParseError(error) {
+  const fallback = 'YAML 语法错误'
+  if (!error || typeof error !== 'object') return fallback
+
+  const baseMessage = typeof error.message === 'string' ? error.message : fallback
+  const line = typeof error.mark?.line === 'number' ? error.mark.line + 1 : null
+  const column = typeof error.mark?.column === 'number' ? error.mark.column + 1 : null
+
+  if (line && column) {
+    return `${baseMessage} (line ${line}, column ${column})`
+  }
+  return baseMessage
+}
+
+function validateYamlContent(content) {
+  try {
+    yaml.load(content)
+    return null
+  } catch (error) {
+    return formatYamlParseError(error)
+  }
+}
+
+async function applyThemeConfigContent(hexo, baseDir, theme, content) {
+  if (!isThemeInstalled(baseDir, theme)) {
+    throw new Error('主题未安装')
+  }
+
+  const configPath = ensureThemeConfigFile(baseDir, theme)
+  fse.writeFileSync(configPath, content, 'utf-8')
+  const isCurrentTheme = (hexo.config.theme === theme.themeDir)
+
+  if (!isCurrentTheme) {
+    return {
+      success: true,
+      message: '配置已保存（非当前主题，未热更新）',
+      tip: '切换到该主题后配置会生效',
+    }
+  }
+
+  try {
+    const newThemeConfig = yaml.load(content) || {}
+    if (newThemeConfig && typeof newThemeConfig === 'object') {
+      hexo.config.theme_config = Object.assign({}, hexo.config.theme_config, newThemeConfig)
+      if (hexo.theme && hexo.theme.config) {
+        hexo.theme.config = Object.assign({}, hexo.theme.config, newThemeConfig)
+      }
+      hexo.log.info('主题配置已在内存中热更新')
+    }
+  } catch (err) {
+    hexo.log.warn('解析主题配置失败，已保存文件:', err.message)
+  }
+
+  if (hexo.locals && hexo.locals.invalidate) {
+    hexo.locals.invalidate()
+    hexo.log.info('Hexo locals 缓存已清除')
+  }
+
+  hexo.emit('generateBefore')
+
+  setImmediate(async () => {
+    hexo.log.info('[Hexo Pro] 主题配置已更新，正在重新生成站点...')
+    try {
+      const publicDir = path.join(hexo.base_dir, 'public')
+      await cleanPublicDir(publicDir)
+      hexo.log.info('[Hexo Pro] public 目录已清理')
+
+      await hexo._generate({ cache: false })
+      hexo.log.info('[Hexo Pro] 站点重新生成成功')
+    } catch (err) {
+      hexo.log.error('[Hexo Pro] 站点重新生成失败:', err.message)
+    }
+  })
+
+  return {
+    success: true,
+    message: '配置已保存，正在重新生成站点...',
+    tip: '如果页面未更新，请尝试强制刷新浏览器 (Ctrl+F5 或 Cmd+Shift+R)',
+  }
+}
+
 module.exports = function (app, hexo, use, db) {
   // 获取内置主题列表
   use('theme/list', function (req, res) {
@@ -253,22 +431,16 @@ module.exports = function (app, hexo, use, db) {
       return res.send(400, '缺少主题ID');
     }
 
-    const theme = BUILTIN_THEMES.find((t) => t.id === themeId);
+    const theme = getThemeById(themeId);
     if (!theme) {
       return res.send(404, '主题不存在');
     }
 
     const baseDir = hexo.base_dir;
-    const configPath = path.join(baseDir, theme.configFile);
-    const themeConfigPath = path.join(baseDir, 'themes', theme.themeDir, '_config.yml');
 
     try {
-      let content = '';
-      if (fs.existsSync(configPath)) {
-        content = fse.readFileSync(configPath, 'utf-8');
-      } else if (fs.existsSync(themeConfigPath)) {
-        content = fse.readFileSync(themeConfigPath, 'utf-8');
-      } else {
+      const content = readThemeConfigContent(baseDir, theme);
+      if (content === null) {
         return res.send(404, '主题配置文件不存在');
       }
       res.done({ content, configPath: theme.configFile });
@@ -287,86 +459,157 @@ module.exports = function (app, hexo, use, db) {
       return res.send(400, '缺少主题ID或配置内容');
     }
 
-    const theme = BUILTIN_THEMES.find((t) => t.id === themeId);
+    const theme = getThemeById(themeId);
     if (!theme) {
       return res.send(404, '主题不存在');
     }
 
     const baseDir = hexo.base_dir;
-    const configPath = path.join(baseDir, theme.configFile);
-    const themePath = path.join(baseDir, 'themes', theme.themeDir);
+    const previousContent = readThemeConfigContent(baseDir, theme);
 
-    if (!fs.existsSync(themePath)) {
+    if (!isThemeInstalled(baseDir, theme)) {
       return res.send(404, '主题未安装');
     }
 
-    try {
-      // 确保覆盖配置文件存在
-      if (!fs.existsSync(configPath)) {
-        const themeConfigSrc = path.join(themePath, '_config.yml');
-        if (fs.existsSync(themeConfigSrc)) {
-          fse.copyFileSync(themeConfigSrc, configPath);
+    if (typeof content !== 'string') {
+      return res.send(400, {
+        code: 400,
+        message: '配置内容必须是字符串',
+      })
+    }
+
+    const parseError = validateYamlContent(content)
+    if (parseError) {
+      return res.send(400, {
+        code: 400,
+        message: 'YAML 配置语法错误，保存已取消',
+        details: parseError,
+      })
+    }
+
+    (async () => {
+      try {
+        let snapshot = null
+        if (typeof previousContent === 'string' && previousContent !== content) {
+          snapshot = createThemeConfigSnapshot(baseDir, themeId, previousContent, { source: 'auto-save' })
         }
+
+        const result = await applyThemeConfigContent(hexo, baseDir, theme, content)
+        res.done(Object.assign({}, result, { snapshot }))
+      } catch (error) {
+        hexo.log.error('保存主题配置失败:', error);
+        res.send(500, '保存主题配置失败');
+      }
+    })()
+  });
+
+  // 获取主题配置快照列表
+  use('theme/config/snapshots', function (req, res) {
+    const themeId = req.query.themeId || req.body?.themeId;
+    if (!themeId) {
+      return res.send(400, '缺少主题ID');
+    }
+
+    const theme = getThemeById(themeId);
+    if (!theme) {
+      return res.send(404, '主题不存在');
+    }
+
+    try {
+      const snapshots = readThemeConfigSnapshots(hexo.base_dir, themeId)
+        .map((item) => toSnapshotMeta(item))
+        .filter(Boolean)
+      res.done({ snapshots, total: snapshots.length, max: MAX_THEME_CONFIG_SNAPSHOTS })
+    } catch (error) {
+      hexo.log.error('读取主题快照失败:', error)
+      res.send(500, '读取主题快照失败')
+    }
+  })
+
+  // 手动创建主题配置快照
+  use('theme/config/snapshot/create', function (req, res) {
+    if (req.method !== 'POST') return;
+
+    const { themeId, note = '' } = req.body || {}
+    if (!themeId) {
+      return res.send(400, '缺少主题ID')
+    }
+
+    const theme = getThemeById(themeId)
+    if (!theme) {
+      return res.send(404, '主题不存在')
+    }
+
+    try {
+      const content = readThemeConfigContent(hexo.base_dir, theme)
+      if (typeof content !== 'string') {
+        return res.send(404, '主题配置文件不存在')
       }
 
-      fse.writeFileSync(configPath, content, 'utf-8');
-      const isCurrentTheme = (hexo.config.theme === theme.themeDir);
-
-      // 非当前主题：仅保存配置文件，不做内存热更新
-      if (!isCurrentTheme) {
+      const snapshot = createThemeConfigSnapshot(hexo.base_dir, themeId, content, {
+        source: 'manual',
+        note,
+      })
+      if (!snapshot) {
         return res.done({
           success: true,
-          message: '配置已保存（非当前主题，未热更新）',
-          tip: '切换到该主题后配置会生效',
-        });
+          skipped: true,
+          message: '当前配置与最近快照一致，已跳过创建',
+        })
       }
-
-      // 重新加载主题配置到内存
-      try {
-        const newThemeConfig = yaml.load(content);
-        // 更新 hexo.config.theme_config（这是 Hexo 实际用于覆盖主题配置的源）
-        hexo.config.theme_config = Object.assign({}, hexo.config.theme_config, newThemeConfig);
-        // 同时更新 hexo.theme.config 以确保即时生效
-        hexo.theme.config = Object.assign({}, hexo.theme.config, newThemeConfig);
-        hexo.log.info('主题配置已在内存中热更新');
-      } catch (err) {
-        hexo.log.warn('解析主题配置失败，已保存文件:', err.message);
-      }
-
-      // 清除 Hexo 内部缓存，确保配置更新生效
-      if (hexo.locals && hexo.locals.invalidate) {
-        hexo.locals.invalidate();
-        hexo.log.info('Hexo locals 缓存已清除');
-      }
-      // 触发 generateBefore 事件来清除 fragment_cache
-      hexo.emit('generateBefore');
 
       res.done({
         success: true,
-        message: '配置已保存，正在重新生成站点...',
-        tip: '如果页面未更新，请尝试强制刷新浏览器 (Ctrl+F5 或 Cmd+Shift+R)',
-      });
-
-      // 触发 Hexo 重新生成（使用当前进程实例）
-      setImmediate(async () => {
-        hexo.log.info('[Hexo Pro] 主题配置已更新，正在重新生成站点...');
-        try {
-          // 清除 public 目录，确保静态文件（CSS/JS）重新生成
-          const publicDir = path.join(hexo.base_dir, 'public');
-          await cleanPublicDir(publicDir);
-          hexo.log.info('[Hexo Pro] public 目录已清理');
-
-          // 重新生成站点
-          await hexo._generate({ cache: false });
-          hexo.log.info('[Hexo Pro] 站点重新生成成功');
-        } catch (err) {
-          hexo.log.error('[Hexo Pro] 站点重新生成失败:', err.message);
-        }
-      });
+        message: '快照已创建',
+        snapshot,
+      })
     } catch (error) {
-      hexo.log.error('保存主题配置失败:', error);
-      res.send(500, '保存主题配置失败');
+      hexo.log.error('创建主题快照失败:', error)
+      res.send(500, '创建主题快照失败')
     }
+  })
+
+  // 回滚主题配置到指定快照
+  use('theme/config/rollback', function (req, res) {
+    if (req.method !== 'POST') return;
+
+    const { themeId, snapshotId } = req.body || {}
+    if (!themeId || !snapshotId) {
+      return res.send(400, '缺少主题ID或快照ID')
+    }
+
+    const theme = getThemeById(themeId)
+    if (!theme) {
+      return res.send(404, '主题不存在')
+    }
+
+    const snapshots = readThemeConfigSnapshots(hexo.base_dir, themeId)
+    const targetSnapshot = snapshots.find((item) => item.id === snapshotId)
+    if (!targetSnapshot) {
+      return res.send(404, '快照不存在')
+    }
+
+    ; (async () => {
+      try {
+        const currentContent = readThemeConfigContent(hexo.base_dir, theme)
+        let backupSnapshot = null
+        if (typeof currentContent === 'string' && currentContent !== targetSnapshot.content) {
+          backupSnapshot = createThemeConfigSnapshot(hexo.base_dir, themeId, currentContent, {
+            source: 'rollback-backup',
+            note: `before rollback to ${snapshotId}`,
+          })
+        }
+
+        const result = await applyThemeConfigContent(hexo, hexo.base_dir, theme, targetSnapshot.content)
+        res.done(Object.assign({}, result, {
+          rollbackTo: toSnapshotMeta(targetSnapshot),
+          backupSnapshot,
+        }))
+      } catch (error) {
+        hexo.log.error('回滚主题配置失败:', error)
+        res.send(500, '回滚主题配置失败')
+      }
+    })()
   });
 
   // 检查主题是否已安装
