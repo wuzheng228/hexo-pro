@@ -1,6 +1,7 @@
 const path = require('path');
 const fs = require('fs-extra');
 const multer = require('multer');
+const axios = require('axios');
 const { v4: uuidv4 } = require('uuid');
 const utils = require('./utils');
 
@@ -53,6 +54,100 @@ function ensureUtf8Filename(name) {
     } catch (_) {
         return name;
     }
+}
+
+const IMAGE_MIME_EXT_MAP = {
+    'image/jpeg': 'jpg',
+    'image/jpg': 'jpg',
+    'image/png': 'png',
+    'image/gif': 'gif',
+    'image/webp': 'webp',
+    'image/svg+xml': 'svg',
+    'image/bmp': 'bmp',
+    'image/x-icon': 'ico',
+    'image/vnd.microsoft.icon': 'ico',
+    'image/avif': 'avif'
+};
+
+const ALLOWED_IMAGE_EXTS = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'ico', 'avif']);
+
+function getImageExtensionByContentType(contentType) {
+    if (!contentType) return '';
+    const ct = String(contentType).split(';')[0].trim().toLowerCase();
+    return IMAGE_MIME_EXT_MAP[ct] || '';
+}
+
+function sanitizeFilename(name) {
+    let safe = String(name || '')
+        .replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    if (!safe || safe === '.' || safe === '..') {
+        safe = `image_${Date.now()}`;
+    }
+
+    if (safe.length > 180) {
+        safe = safe.slice(0, 180);
+    }
+
+    return safe;
+}
+
+function buildImageFilenameFromUrl(url, contentType) {
+    let candidate = '';
+    try {
+        const parsed = new URL(String(url));
+        const decodedPath = decodeURIComponent(parsed.pathname || '');
+        candidate = path.basename(decodedPath || '') || '';
+    } catch (_) {
+        candidate = '';
+    }
+
+    candidate = sanitizeFilename(candidate);
+    let ext = path.extname(candidate).replace('.', '').toLowerCase();
+    const extByMime = getImageExtensionByContentType(contentType);
+    const baseName = ext ? candidate.slice(0, -(ext.length + 1)) : candidate;
+
+    if (!ext || !ALLOWED_IMAGE_EXTS.has(ext)) {
+        ext = extByMime || 'png';
+        return `${sanitizeFilename(baseName || `image_${Date.now()}`)}.${ext}`;
+    }
+
+    return candidate;
+}
+
+function isHttpImageUrl(url) {
+    if (!url) return false;
+    return /^https?:\/\//i.test(String(url).trim());
+}
+
+async function downloadImageFromUrl(url) {
+    const response = await axios.get(url, {
+        responseType: 'arraybuffer',
+        timeout: 20000,
+        maxContentLength: 20 * 1024 * 1024,
+        maxBodyLength: 20 * 1024 * 1024,
+        validateStatus: (status) => status >= 200 && status < 400,
+        headers: {
+            Accept: 'image/*,*/*;q=0.8',
+            'User-Agent': 'HexoPro-Image-Migrator/1.0'
+        }
+    });
+
+    const contentType = String(response.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
+    const extByMime = getImageExtensionByContentType(contentType);
+    const buffer = Buffer.from(response.data || []);
+
+    if (!buffer.length) {
+        throw new Error('下载内容为空');
+    }
+
+    if (contentType && !contentType.startsWith('image/') && !extByMime) {
+        throw new Error(`目标不是图片内容（content-type: ${contentType}）`);
+    }
+
+    return { buffer, contentType };
 }
 
 module.exports = function (app, hexo, use, db) {
@@ -707,6 +802,143 @@ module.exports = function (app, hexo, use, db) {
         }
     });
 
+    // 转存外链图片到当前图床（用于编辑器一键迁移临时图片链接）
+    use('images/migrate', async function (req, res) {
+        const config = getStorageConfig();
+        const reqType = (
+            (req.body && req.body.storageType) ||
+            (req.query && req.query.storageType) ||
+            req.headers['x-storage-type'] ||
+            config.type ||
+            'local'
+        ).toLowerCase();
+
+        const rawUrls = Array.isArray(req.body && req.body.urls) ? req.body.urls : [];
+        if (!rawUrls.length) {
+            return res.send(400, '缺少待转存的图片链接');
+        }
+
+        // 限制单次数量，避免一次处理过多导致超时
+        if (rawUrls.length > 30) {
+            return res.send(400, '一次最多转存 30 张图片');
+        }
+
+        const folder = String((req.body && req.body.folder) || '')
+            .replace(/^\/+/, '')
+            .replace(/\\/g, '/')
+            .trim();
+        if (folder.includes('..')) {
+            return res.send(400, '目标文件夹不合法');
+        }
+
+        const uniqueUrls = Array.from(new Set(rawUrls.map((u) => String(u || '').trim()).filter(Boolean)));
+        const items = [];
+
+        for (const sourceUrl of uniqueUrls) {
+            if (!isHttpImageUrl(sourceUrl)) {
+                items.push({ success: false, sourceUrl, msg: '仅支持 http/https 图片链接' });
+                continue;
+            }
+
+            try {
+                const { buffer, contentType } = await downloadImageFromUrl(sourceUrl);
+                const filename = buildImageFilenameFromUrl(sourceUrl, contentType);
+                const ext = path.extname(filename).replace('.', '').toLowerCase();
+                const mime = contentType || `image/${ext || 'png'}`;
+                const data = `data:${mime};base64,${buffer.toString('base64')}`;
+
+                const uploaded = await uploadBase64WithStorageHandler({
+                    storageType: reqType,
+                    data,
+                    filename,
+                    folder,
+                    config
+                });
+
+                items.push({
+                    success: true,
+                    sourceUrl,
+                    ...uploaded
+                });
+            } catch (err) {
+                items.push({
+                    success: false,
+                    sourceUrl,
+                    msg: err && err.message ? err.message : '转存失败'
+                });
+            }
+        }
+
+        const successCount = items.filter((it) => it.success).length;
+        return res.done({
+            code: 0,
+            items,
+            total: items.length,
+            successCount,
+            failedCount: items.length - successCount
+        });
+    });
+
+    async function uploadBase64WithStorageHandler(options) {
+        const storageType = (options.storageType || 'local').toLowerCase();
+        const payload = {
+            data: options.data,
+            filename: options.filename,
+            folder: options.folder || '',
+            storageType
+        };
+
+        return new Promise((resolve, reject) => {
+            let settled = false;
+            const resolveOnce = (val) => {
+                if (settled) return;
+                settled = true;
+                resolve(val || {});
+            };
+            const rejectOnce = (err) => {
+                if (settled) return;
+                settled = true;
+                reject(err instanceof Error ? err : new Error(String(err || '上传失败')));
+            };
+
+            const fakeReq = {
+                body: payload,
+                query: {},
+                headers: { 'content-type': 'application/json' }
+            };
+            const fakeRes = {
+                done: (val) => resolveOnce(val),
+                send: (status, data) => {
+                    if (typeof data === 'string') return rejectOnce(new Error(data));
+                    if (data && typeof data === 'object' && data.msg) return rejectOnce(new Error(data.msg));
+                    return rejectOnce(new Error(`上传失败(${status})`));
+                }
+            };
+
+            const safeCall = (fn) => {
+                Promise.resolve()
+                    .then(() => fn())
+                    .catch((err) => rejectOnce(err));
+            };
+
+            if (storageType === 'local') {
+                return safeCall(() => handleLocalUpload(fakeReq, fakeRes, () => { }, options.config));
+            }
+            if (storageType === 'aliyun' && aliOSS) {
+                return safeCall(() => handleAliyunUpload(fakeReq, fakeRes, options.config));
+            }
+            if (storageType === 'qiniu' && qiniuSDK) {
+                return safeCall(() => handleQiniuUpload(fakeReq, fakeRes, options.config));
+            }
+            if (storageType === 'tencent' && tencentCOS) {
+                return safeCall(() => handleTencentUpload(fakeReq, fakeRes, options.config));
+            }
+
+            // SDK 不可用时按既有行为回退到本地
+            return safeCall(() => handleLocalUpload(fakeReq, fakeRes, () => { }, options.config));
+        });
+    }
+
     // 本地存储处理函数
     function handleLocalUpload(req, res, next, config) {
         // 检查是否为表单数据上传
@@ -1354,7 +1586,7 @@ module.exports = function (app, hexo, use, db) {
 
         formUploader.put(uploadToken, objectName, imageData, null, function (respErr, respBody, respInfo) {
             if (respErr) {
-                throw respErr;
+                return res.send(500, '七牛云上传失败: ' + respErr.message);
             }
 
             if (respInfo.statusCode === 200) {
@@ -1441,7 +1673,7 @@ module.exports = function (app, hexo, use, db) {
             Body: imageData,
         }, function (err, data) {
             if (err) {
-                throw err;
+                return res.send(500, '腾讯云COS上传失败: ' + err.message);
             }
 
             const base = domain ? String(domain).replace(/\/$/, '') : '';
