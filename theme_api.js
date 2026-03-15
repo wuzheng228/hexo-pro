@@ -90,6 +90,54 @@ const BUILTIN_THEMES = [
     configFile: '_config.butterfly.yml',
     themeDir: 'butterfly',
   },
+  {
+    id: 'next',
+    name: 'NexT',
+    description: '经典老牌主题，极简优雅，性能极佳；支持多种布局（Muse/Mist/Pisces/Gemini），集成 MathJax、Disqus，配置高度灵活；适合喜欢稳定、轻量、SEO 友好的用户，文档与社区支持极强。',
+    author: 'theme-next',
+    repo: 'https://github.com/theme-next/hexo-theme-next.git',
+    branch: 'master',
+    installType: 'git',
+    dependencies: [],
+    configFile: '_config.next.yml',
+    themeDir: 'next',
+  },
+  {
+    id: 'fluid',
+    name: 'Fluid',
+    description: 'Material Design 风格，界面清爽有层次；响应式完美，内置 LaTeX 与 Mermaid 图表支持，自定义项丰富；适合学术 / 技术写作，默认样式已足够美观，无需过多魔改。',
+    author: 'fluid-dev',
+    repo: 'https://github.com/fluid-dev/hexo-theme-fluid.git',
+    branch: 'master',
+    installType: 'git',
+    dependencies: [],
+    configFile: '_config.fluid.yml',
+    themeDir: 'fluid',
+  },
+  {
+    id: 'stellar',
+    name: 'Stellar',
+    description: '综合型主题（博客 + 知识库 + 专栏 + 笔记），组件化设计，内置海量标签 / 数据组件；适合搭建个人知识体系、多内容形态的站点，更新活跃，中文生态好。',
+    author: 'xaoxuu',
+    repo: 'https://github.com/xaoxuu/hexo-theme-stellar.git',
+    branch: 'main',
+    installType: 'git',
+    dependencies: [],
+    configFile: '_config.stellar.yml',
+    themeDir: 'stellar',
+  },
+  {
+    id: 'volantis',
+    name: 'Volantis',
+    description: '模块化、高自由度，卡片式布局 + 丰富的 shortcode；适合喜欢折腾、追求个性化展示的博主，支持多种插件与评论系统，文档详细。',
+    author: 'volantis-x',
+    repo: 'https://github.com/volantis-x/hexo-theme-volantis.git',
+    branch: '7.x',
+    installType: 'git',
+    dependencies: [],
+    configFile: '_config.volantis.yml',
+    themeDir: 'volantis',
+  },
 ];
 
 function execPromise(command, options = {}) {
@@ -276,6 +324,16 @@ module.exports = function (app, hexo, use, db) {
       }
 
       fse.writeFileSync(configPath, content, 'utf-8');
+      const isCurrentTheme = (hexo.config.theme === theme.themeDir);
+
+      // 非当前主题：仅保存配置文件，不做内存热更新
+      if (!isCurrentTheme) {
+        return res.done({
+          success: true,
+          message: '配置已保存（非当前主题，未热更新）',
+          tip: '切换到该主题后配置会生效',
+        });
+      }
 
       // 重新加载主题配置到内存
       try {
