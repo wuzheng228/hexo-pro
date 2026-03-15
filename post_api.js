@@ -47,6 +47,22 @@ module.exports = function (app, hexo, use) {
             metadata: Object.keys(hexo.config.metadata || {})
         }
     }
+    function normalizeTaxonomyValues(values) {
+        if (values === undefined || values === null) {
+            return []
+        }
+        const list = Array.isArray(values) ? values : [values]
+        return Array.from(new Set(list
+            .map(item => typeof item === 'string' ? item.trim() : String(item || '').trim())
+            .filter(Boolean)))
+    }
+    function toCategorySummary(category) {
+        return {
+            name: category.name,
+            count: category.posts.length,
+            path: category.path
+        }
+    }
     function addIsDraft(post) {
         if (!post) return post
         post.isDraft = post.source?.indexOf('_draft') === 0
@@ -396,6 +412,80 @@ module.exports = function (app, hexo, use) {
             })
         });
     });
+    use('categories/list', function (req, res) {
+        try {
+            const parsedUrl = url.parse(req.url, true);
+            const queryParams = parsedUrl.query;
+            const includeEmpty = queryParams.includeEmpty === 'true';
+
+            const categories = []
+            hexo.model('Category').forEach(function (category) {
+                if (!includeEmpty && category.posts.length === 0) {
+                    return
+                }
+                categories.push(toCategorySummary(category))
+            })
+
+            const sortedCategories = _.orderBy(categories, ['count', 'name'], ['desc', 'asc'])
+            res.done(sortedCategories)
+        } catch (error) {
+            console.error('获取分类列表失败:', error)
+            res.send(500, '获取分类列表失败')
+        }
+    })
+    use('categories/posts', function (req, res) {
+        try {
+            const parsedUrl = url.parse(req.url, true);
+            const queryParams = parsedUrl.query;
+            const { name, page = 1, pageSize = 12, includeDraft = 'true' } = queryParams;
+
+            const categoryName = Array.isArray(name) ? name[0] : name
+            if (!categoryName) {
+                return res.send(400, 'No category name given')
+            }
+
+            const category = hexo.model('Category').filter(cat => cat.name === categoryName).data[0]
+            if (!category) {
+                return res.done({
+                    category: null,
+                    total: 0,
+                    data: []
+                })
+            }
+
+            const sourcePosts = category.posts && typeof category.posts.toArray === 'function'
+                ? category.posts.toArray()
+                : []
+            const shouldIncludeDraft = includeDraft !== 'false'
+
+            let postList = _.cloneDeep(sourcePosts).map(addIsDraft)
+            postList = postList.filter(post => post.isDiscarded === false)
+            if (!shouldIncludeDraft) {
+                postList = postList.filter(post => post.isDraft === false)
+            }
+
+            const sortedList = postList.sort(function (a, b) {
+                return new Date(b.date) - new Date(a.date);
+            });
+
+            const total = sortedList.length
+            const startIndex = (Math.max(parseInt(page), 1) - 1) * parseInt(pageSize);
+            const endIndex = startIndex + parseInt(pageSize);
+            const paginatedData = sortedList.slice(startIndex, endIndex);
+
+            res.done({
+                category: toCategorySummary(category),
+                total: total,
+                data: paginatedData.map(post => {
+                    const { site, raw, content, more, tags, _content, categories, ...rest } = post;
+                    return rest;
+                })
+            })
+        } catch (error) {
+            console.error('获取分类文章失败:', error)
+            res.send(500, '获取分类文章失败')
+        }
+    })
     use('posts/page/list', function (req, res) {
         const parsedUrl = url.parse(req.url, true);
         const queryParams = parsedUrl.query;
@@ -420,6 +510,14 @@ module.exports = function (app, hexo, use) {
         }
 
         var postParameters = { title: req.body.title, layout: 'draft', date: new Date(), author: hexo.config.author };
+        const categories = normalizeTaxonomyValues(req.body.categories)
+        const tags = normalizeTaxonomyValues(req.body.tags)
+        if (categories.length) {
+            postParameters.categories = categories
+        }
+        if (tags.length) {
+            postParameters.tags = tags
+        }
         extend(postParameters, hexo.config.metadata || {})
         hexo.post.create(postParameters)
             .error(function (err) {
@@ -680,4 +778,3 @@ module.exports = function (app, hexo, use) {
 
 
 }
-
