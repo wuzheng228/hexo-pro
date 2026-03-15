@@ -154,6 +154,7 @@ function execPromise(command, options = {}) {
 
 const SNAPSHOT_STORE_DIR = '.hexo-pro/theme-config-snapshots'
 const MAX_THEME_CONFIG_SNAPSHOTS = 30
+const GLOBAL_CONFIG_SNAPSHOT_ID = '__global__site_config__'
 
 function getThemeSnapshotDir(baseDir) {
   return path.join(baseDir, SNAPSHOT_STORE_DIR)
@@ -226,6 +227,27 @@ function readThemeConfigContent(baseDir, theme) {
     return fse.readFileSync(themeConfigPath, 'utf-8')
   }
   return null
+}
+
+function getGlobalConfigPath(baseDir) {
+  return path.join(baseDir, '_config.yml')
+}
+
+function readGlobalConfigContent(baseDir) {
+  const configPath = getGlobalConfigPath(baseDir)
+  if (!fs.existsSync(configPath)) return null
+  return fse.readFileSync(configPath, 'utf-8')
+}
+
+function applyGlobalConfigContent(baseDir, content) {
+  const configPath = getGlobalConfigPath(baseDir)
+  fse.writeFileSync(configPath, content, 'utf-8')
+  return {
+    success: true,
+    needRestart: true,
+    message: '全局配置已保存，请重启 Hexo 服务后生效',
+    tip: '插件端请手动重启，桌面端可自动重启',
+  }
 }
 
 function ensureThemeConfigFile(baseDir, theme) {
@@ -611,6 +633,149 @@ module.exports = function (app, hexo, use, db) {
       }
     })()
   });
+
+  // 获取全局配置内容（_config.yml）
+  use('site/config', function (req, res) {
+    try {
+      const content = readGlobalConfigContent(hexo.base_dir)
+      if (content === null) {
+        return res.send(404, '全局配置文件不存在')
+      }
+      res.done({ content, configPath: '_config.yml', needRestart: true })
+    } catch (error) {
+      hexo.log.error('读取全局配置失败:', error)
+      res.send(500, '读取全局配置失败')
+    }
+  })
+
+  // 保存全局配置
+  use('site/config/save', function (req, res) {
+    if (req.method !== 'POST') return
+
+    const { content } = req.body || {}
+    if (content === undefined) {
+      return res.send(400, '缺少配置内容')
+    }
+    if (typeof content !== 'string') {
+      return res.send(400, {
+        code: 400,
+        message: '配置内容必须是字符串',
+      })
+    }
+
+    const parseError = validateYamlContent(content)
+    if (parseError) {
+      return res.send(400, {
+        code: 400,
+        message: 'YAML 配置语法错误，保存已取消',
+        details: parseError,
+      })
+    }
+
+    ; (async () => {
+      try {
+        const baseDir = hexo.base_dir
+        const previousContent = readGlobalConfigContent(baseDir)
+        let snapshot = null
+        if (typeof previousContent === 'string' && previousContent !== content) {
+          snapshot = createThemeConfigSnapshot(baseDir, GLOBAL_CONFIG_SNAPSHOT_ID, previousContent, {
+            source: 'auto-save',
+          })
+        }
+
+        const result = applyGlobalConfigContent(baseDir, content)
+        res.done(Object.assign({}, result, { snapshot }))
+      } catch (error) {
+        hexo.log.error('保存全局配置失败:', error)
+        res.send(500, '保存全局配置失败')
+      }
+    })()
+  })
+
+  // 获取全局配置快照列表
+  use('site/config/snapshots', function (req, res) {
+    try {
+      const snapshots = readThemeConfigSnapshots(hexo.base_dir, GLOBAL_CONFIG_SNAPSHOT_ID)
+        .map((item) => toSnapshotMeta(item))
+        .filter(Boolean)
+      res.done({ snapshots, total: snapshots.length, max: MAX_THEME_CONFIG_SNAPSHOTS })
+    } catch (error) {
+      hexo.log.error('读取全局配置快照失败:', error)
+      res.send(500, '读取全局配置快照失败')
+    }
+  })
+
+  // 手动创建全局配置快照
+  use('site/config/snapshot/create', function (req, res) {
+    if (req.method !== 'POST') return
+
+    const { note = '' } = req.body || {}
+    try {
+      const content = readGlobalConfigContent(hexo.base_dir)
+      if (typeof content !== 'string') {
+        return res.send(404, '全局配置文件不存在')
+      }
+
+      const snapshot = createThemeConfigSnapshot(hexo.base_dir, GLOBAL_CONFIG_SNAPSHOT_ID, content, {
+        source: 'manual',
+        note,
+      })
+      if (!snapshot) {
+        return res.done({
+          success: true,
+          skipped: true,
+          message: '当前配置与最近快照一致，已跳过创建',
+        })
+      }
+
+      res.done({
+        success: true,
+        message: '快照已创建',
+        snapshot,
+      })
+    } catch (error) {
+      hexo.log.error('创建全局配置快照失败:', error)
+      res.send(500, '创建全局配置快照失败')
+    }
+  })
+
+  // 回滚全局配置到指定快照
+  use('site/config/rollback', function (req, res) {
+    if (req.method !== 'POST') return
+
+    const { snapshotId } = req.body || {}
+    if (!snapshotId) {
+      return res.send(400, '缺少快照ID')
+    }
+
+    const snapshots = readThemeConfigSnapshots(hexo.base_dir, GLOBAL_CONFIG_SNAPSHOT_ID)
+    const targetSnapshot = snapshots.find((item) => item.id === snapshotId)
+    if (!targetSnapshot) {
+      return res.send(404, '快照不存在')
+    }
+
+    ; (async () => {
+      try {
+        const currentContent = readGlobalConfigContent(hexo.base_dir)
+        let backupSnapshot = null
+        if (typeof currentContent === 'string' && currentContent !== targetSnapshot.content) {
+          backupSnapshot = createThemeConfigSnapshot(hexo.base_dir, GLOBAL_CONFIG_SNAPSHOT_ID, currentContent, {
+            source: 'rollback-backup',
+            note: `before rollback to ${snapshotId}`,
+          })
+        }
+
+        const result = applyGlobalConfigContent(hexo.base_dir, targetSnapshot.content)
+        res.done(Object.assign({}, result, {
+          rollbackTo: toSnapshotMeta(targetSnapshot),
+          backupSnapshot,
+        }))
+      } catch (error) {
+        hexo.log.error('回滚全局配置失败:', error)
+        res.send(500, '回滚全局配置失败')
+      }
+    })()
+  })
 
   // 检查主题是否已安装
   use('theme/installed', function (req, res) {
