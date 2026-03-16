@@ -19,10 +19,61 @@ const utils = require('./utils');
  */
 
 module.exports = function (model, unimark, update, callback, hexo) {
+    const toDoubleQuotedYamlString = (value) => JSON.stringify(String(value))
+    const toSingleQuotedYamlString = (value) => `'${String(value).replace(/'/g, "''")}'`
+    const escapeRegex = (input) => String(input).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const applyFrontMatterStyles = (raw, compiled, styles) => {
+        if (!styles || typeof styles !== 'object') {
+            return raw
+        }
+
+        const lines = String(raw || '').split('\n')
+        if (!lines.length || lines[0] !== '---') {
+            return raw
+        }
+
+        const endIndex = lines.indexOf('---', 1)
+        if (endIndex <= 0) {
+            return raw
+        }
+
+        Object.keys(styles).forEach((key) => {
+            const style = styles[key]
+            if (!['single', 'double'].includes(style)) {
+                return
+            }
+            if (!Object.prototype.hasOwnProperty.call(compiled, key)) {
+                return
+            }
+            const currentValue = compiled[key]
+            if (typeof currentValue !== 'string') {
+                return
+            }
+
+            const styledValue = style === 'double'
+                ? toDoubleQuotedYamlString(currentValue)
+                : toSingleQuotedYamlString(currentValue)
+
+            const keyRegex = new RegExp(`^${escapeRegex(key)}:\\s.*$`)
+            for (let i = 1; i < endIndex; i++) {
+                if (keyRegex.test(lines[i])) {
+                    lines[i] = `${key}: ${styledValue}`
+                    break
+                }
+            }
+        })
+
+        return lines.join('\n')
+    }
+
     unimark = utils.base64Decode(unimark)
     const newFrontMatter = update.frontMatter
+    const frontMatterStyles = update.frontMatterStyles
     if (newFrontMatter) {
         delete update.frontMatter
+    }
+    if (frontMatterStyles) {
+        delete update.frontMatterStyles
     }
 
     var post = hexo.model(model).filter(post => {
@@ -78,6 +129,7 @@ module.exports = function (model, unimark, update, callback, hexo) {
 
     delete update._content
     var raw = hfm.stringify(compiled, { prefixSeparator: true });
+    raw = applyFrontMatterStyles(raw, compiled, frontMatterStyles)
     update.raw = raw
     update.updated = moment()
     update.slug = slug
