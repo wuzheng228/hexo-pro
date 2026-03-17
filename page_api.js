@@ -99,62 +99,60 @@ module.exports = function (app, hexo, use) {
         if (!req.body) {
             return res.send(400, 'No page body given');
         }
-        if (!req.body.title) {
+
+        const requestedTitle = String(req.body.title || '').trim();
+        if (!requestedTitle) {
             return res.send(400, 'No title given');
         }
 
-        // 生成唯一文件名
-        let title = req.body.title;
-        let filePath = path.join(hexo.source_dir, `${title}/index.md`);
+        try {
+            // 循环生成唯一文件名，避免重试时时间戳冲突导致创建失败
+            let title = requestedTitle;
+            let filePath = path.join(hexo.source_dir, `${title}/index.md`);
+            let attempt = 0;
 
-        // 检查文件是否存在
-        const exists = fse.pathExistsSync(filePath);
-        if (exists) {
-            // 如果存在，自动添加时间戳后缀
-            title = `${title} (${Date.now()})`;
-            filePath = path.join(hexo.source_dir, `${title}/index.md`);
-            // 不返回错误，而是继续创建带有新标题的页面
-        }
-
-        // 生成页面的元数据
-        const frontMatter = {
-            title: title,
-            layout: 'page',
-            date: new Date(),
-            updated: new Date(),
-        };
-
-        // 将元数据转换为 YAML 格式
-        const frontMatterYaml = hfm.stringify(frontMatter);
-
-        // 页面内容，这里可以根据需要修改
-        const pageContent = `${frontMatterYaml}`;
-
-        // 创建文件并写入内容
-        await fs.writeFile(filePath, pageContent, async (err) => {
-            if (err) {
-                console.error(err);
-                return res.send(500, 'Failed to create page');
+            while (fse.pathExistsSync(filePath)) {
+                const suffix = `${Date.now()}${attempt ? `-${attempt}` : ''}`;
+                title = `${requestedTitle}${suffix}`;
+                filePath = path.join(hexo.source_dir, `${title}/index.md`);
+                attempt += 1;
+                if (attempt > 1000) {
+                    throw new Error('Failed to generate unique page filename');
+                }
             }
-        });
 
-        // 通知 Hexo 重新处理数据源
-        await hexo.source.process().then(() => {
-            console.log('Page created:', filePath);
-        }).catch(e => {
+            const frontMatter = {
+                title: title,
+                layout: 'page',
+                date: new Date(),
+                updated: new Date(),
+            };
+            const pageContent = hfm.stringify(frontMatter);
+
+            // 使用 Promise 风格，避免 callback + await 混用导致请求悬挂
+            await fs.writeFile(filePath, pageContent);
+
+            const source = filePath.slice(hexo.source_dir.length).replace(/\\/g, '/');
+            await hexo.source.process([source]);
+
+            let page = hexo.model('Page').findOne({ source });
+            if (!page) {
+                page = hexo.model('Page').findOne({ title });
+            }
+            if (!page) {
+                return res.send(500, 'Page created but failed to index');
+            }
+
+            if (title !== requestedTitle) {
+                page.titleChanged = true;
+                page.originalTitle = requestedTitle;
+            }
+
+            return res.done(addFormatDateTime(page));
+        } catch (e) {
             console.error(e);
-            res.send(500, 'Failed to refresh data');
-        });
-
-        var page = hexo.model('Page').findOne({ source: filePath.slice(hexo.source_dir.length).replace(/\\/g, '/') });
-
-        // 如果存在重名情况，在返回结果中添加提示信息
-        if (exists) {
-            page.titleChanged = true; // 添加标志，前端可以据此显示提示
-            page.originalTitle = req.body.title; // 保存原始标题
+            return res.send(500, e?.message || 'Failed to create page');
         }
-
-        return res.done(addFormatDateTime(page));
     }
 
     // 检查页面是否存在

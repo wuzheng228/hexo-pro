@@ -155,4 +155,111 @@ module.exports = function (app, hexo, use, db) {
             });
         });
     });
+
+    /**
+     * 获取忘记密码所需的安全问题
+     * POST /hexopro/api/auth/security-question
+     * Body: { username }
+     */
+    use('auth/security-question', function (req, res) {
+        if (req.method !== 'POST') return;
+
+        if (!global.actualNeedLogin) {
+            return res.done({ code: -2, msg: '未配置登录信息，无需找回密码' });
+        }
+
+        const { username } = req.body;
+        if (!username) {
+            return res.done({ code: 400, msg: '请输入用户名' });
+        }
+
+        userDb.findOne({ username }, (err, user) => {
+            if (err) {
+                return res.done({ code: 500, msg: '服务器错误' });
+            }
+
+            if (!user) {
+                return res.done({ code: 404, msg: '用户不存在' });
+            }
+
+            const securityQuestion = (user.securityQuestion || '').toString().trim();
+            if (!securityQuestion) {
+                return res.done({
+                    code: 400,
+                    msg: '该账号未设置安全问题，无法显示提示信息'
+                });
+            }
+
+            res.done({
+                code: 0,
+                data: {
+                    securityQuestion
+                }
+            });
+        });
+    });
+
+    /**
+     * 忘记密码 - 通过安全问题重置密码
+     * POST /hexopro/api/auth/reset-password
+     * Body: { username, securityAnswer, newPassword, confirmPassword }
+     */
+    use('auth/reset-password', function (req, res) {
+        if (req.method !== 'POST') return;
+
+        if (!global.actualNeedLogin) {
+            return res.done({ code: -2, msg: '未配置登录信息，无需重置' });
+        }
+
+        const { username, securityAnswer, newPassword, confirmPassword } = req.body;
+
+        if (!username || !securityAnswer || !newPassword || !confirmPassword) {
+            return res.done({ code: 400, msg: '请填写完整信息' });
+        }
+
+        if (newPassword !== confirmPassword) {
+            return res.done({ code: 400, msg: '两次输入的密码不一致' });
+        }
+
+        if (newPassword.length < 6) {
+            return res.done({ code: 400, msg: '密码长度不能少于6位' });
+        }
+
+        const trimmedAnswer = String(securityAnswer).trim();
+        if (!trimmedAnswer) {
+            return res.done({ code: 400, msg: '请输入安全问题的答案' });
+        }
+
+        userDb.findOne({ username }, (err, user) => {
+            if (err) {
+                return res.done({ code: 500, msg: '服务器错误' });
+            }
+
+            if (!user) {
+                return res.done({ code: 404, msg: '用户不存在' });
+            }
+
+            // 支持安全问题（新）或安全码（旧，向后兼容）
+            const storedAnswer = (user.securityAnswer || user.resetToken || '').toString().trim();
+            if (!storedAnswer) {
+                return res.done({ code: 400, msg: '该账号未设置密码重置安全问题，无法通过此方式找回。请前往设置中配置，或联系管理员。' });
+            }
+
+            if (storedAnswer !== trimmedAnswer) {
+                return res.done({ code: 400, msg: '安全问题答案错误' });
+            }
+
+            userDb.update(
+                { username },
+                { $set: { password: newPassword, updatedAt: new Date() } },
+                {},
+                (err) => {
+                    if (err) {
+                        return res.done({ code: 500, msg: '重置密码失败' });
+                    }
+                    res.done({ code: 0, msg: '密码重置成功，请使用新密码登录' });
+                }
+            );
+        });
+    });
 };

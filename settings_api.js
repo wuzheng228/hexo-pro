@@ -129,7 +129,7 @@ module.exports = function(app, hexo, use, db) {
       
       // 执行注册流程
       function proceedWithRegistration() {
-        const { username, password, confirmPassword, avatar } = req.body;
+        const { username, password, confirmPassword, avatar, securityQuestion, securityAnswer } = req.body;
         
         // 验证输入
         if (!username || !password) {
@@ -146,6 +146,8 @@ module.exports = function(app, hexo, use, db) {
           password,
           avatar: avatar || '',
           isTemporary: false, // 明确标记为正式用户
+          securityQuestion: securityQuestion ? String(securityQuestion).trim() : '',
+          securityAnswer: securityAnswer ? String(securityAnswer).trim() : '',
           createdAt: new Date(),
           updatedAt: new Date()
         };
@@ -477,7 +479,7 @@ module.exports = function(app, hexo, use, db) {
       return res.done({ code: 401, msg: '未授权' });
     }
 
-    const { username: newUsername, avatar, password, confirmPassword, menuCollapsed } = req.body;
+    const { username: newUsername, avatar, password, confirmPassword, menuCollapsed, securityQuestion, securityAnswer } = req.body;
 
     // 验证密码
     if (password && password !== confirmPassword) {
@@ -523,6 +525,14 @@ module.exports = function(app, hexo, use, db) {
         
         if (password) {
           updateData.password = password;
+        }
+
+        // 支持设置或更新密码重置安全问题
+        if (securityQuestion !== undefined) {
+          updateData.securityQuestion = securityQuestion ? String(securityQuestion).trim() : '';
+        }
+        if (securityAnswer !== undefined) {
+          updateData.securityAnswer = securityAnswer ? String(securityAnswer).trim() : '';
         }
 
         updateData.updatedAt = new Date();

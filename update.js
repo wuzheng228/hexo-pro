@@ -1,4 +1,5 @@
 var path = require('path'),
+    nodeFs = require('fs'),
     moment = require('moment'),
     hfm = require('hexo-front-matter'),
     fs = require('hexo-fs'),
@@ -19,10 +20,61 @@ const utils = require('./utils');
  */
 
 module.exports = function (model, unimark, update, callback, hexo) {
+    const toDoubleQuotedYamlString = (value) => JSON.stringify(String(value))
+    const toSingleQuotedYamlString = (value) => `'${String(value).replace(/'/g, "''")}'`
+    const escapeRegex = (input) => String(input).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const applyFrontMatterStyles = (raw, compiled, styles) => {
+        if (!styles || typeof styles !== 'object') {
+            return raw
+        }
+
+        const lines = String(raw || '').split('\n')
+        if (!lines.length || lines[0] !== '---') {
+            return raw
+        }
+
+        const endIndex = lines.indexOf('---', 1)
+        if (endIndex <= 0) {
+            return raw
+        }
+
+        Object.keys(styles).forEach((key) => {
+            const style = styles[key]
+            if (!['single', 'double'].includes(style)) {
+                return
+            }
+            if (!Object.prototype.hasOwnProperty.call(compiled, key)) {
+                return
+            }
+            const currentValue = compiled[key]
+            if (typeof currentValue !== 'string') {
+                return
+            }
+
+            const styledValue = style === 'double'
+                ? toDoubleQuotedYamlString(currentValue)
+                : toSingleQuotedYamlString(currentValue)
+
+            const keyRegex = new RegExp(`^${escapeRegex(key)}:\\s.*$`)
+            for (let i = 1; i < endIndex; i++) {
+                if (keyRegex.test(lines[i])) {
+                    lines[i] = `${key}: ${styledValue}`
+                    break
+                }
+            }
+        })
+
+        return lines.join('\n')
+    }
+
     unimark = utils.base64Decode(unimark)
     const newFrontMatter = update.frontMatter
+    const frontMatterStyles = update.frontMatterStyles
     if (newFrontMatter) {
         delete update.frontMatter
+    }
+    if (frontMatterStyles) {
+        delete update.frontMatterStyles
     }
 
     var post = hexo.model(model).filter(post => {
@@ -48,9 +100,22 @@ module.exports = function (model, unimark, update, callback, hexo) {
     });
     var prev_full = post.full_source,
         full_source = prev_full;
+    let sourceChanged = false
     if (update.source && update.source !== post.source) {
-        // post.full_source only readable ~ see: /hexo/lib/models/post.js
-        full_source = hexo.source_dir + update.source
+        const normalizedSource = String(update.source).replace(/^[/\\]+/, '')
+        const requestedFullSource = path.join(hexo.source_dir, normalizedSource)
+        const targetExists = requestedFullSource !== prev_full && nodeFs.existsSync(requestedFullSource)
+
+        if (targetExists) {
+            // 目标文件已存在（可能属于其他文章），为避免覆盖，放弃 source 变更。
+            delete update.source
+            full_source = prev_full
+            sourceChanged = false
+        } else {
+            // post.full_source only readable ~ see: /hexo/lib/models/post.js
+            full_source = requestedFullSource
+            sourceChanged = true
+        }
     }
 
     preservedKeys.forEach(function (attr) {
@@ -78,6 +143,7 @@ module.exports = function (model, unimark, update, callback, hexo) {
 
     delete update._content
     var raw = hfm.stringify(compiled, { prefixSeparator: true });
+    raw = applyFrontMatterStyles(raw, compiled, frontMatterStyles)
     update.raw = raw
     update.updated = moment()
     update.slug = slug
@@ -95,7 +161,16 @@ module.exports = function (model, unimark, update, callback, hexo) {
     extend(post, update)
 
     post.save().then(async () => {
+        const sourceDir = path.dirname(full_source)
+        if (!nodeFs.existsSync(sourceDir)) {
+            nodeFs.mkdirSync(sourceDir, { recursive: true })
+        }
         fs.writeFileSync(full_source, raw);
+
+        // 标题改名会变更 source：清理旧文件，避免旧文章残留导致重复。
+        if (sourceChanged && prev_full && prev_full !== full_source && nodeFs.existsSync(prev_full)) {
+            nodeFs.unlinkSync(prev_full)
+        }
         hexo.log.info('文章保存成功！');
         await hexo.source.process().then(function () {
             //      console.log(post.full_source, post.source)

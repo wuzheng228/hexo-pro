@@ -13,26 +13,64 @@ module.exports = function (app, hexo, use, db) {
 
     const deployStatusDb = db.deployStatusDb;
 
+    // 去除 ANSI 转义序列，避免前端显示乱码（如 wrangler 输出的颜色码）
+    function stripAnsi(str) {
+        if (typeof str !== 'string') return str;
+        return str.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '');
+    }
+
+    // 脱敏辅助函数
+    function maskSensitiveConfig(config) {
+        const masked = {
+            ...config,
+            token: config.token ? '******' : ''
+        };
+        if (masked.cloudflare) {
+            masked.cloudflare = {
+                ...masked.cloudflare,
+                apiToken: masked.cloudflare.apiToken ? '******' : ''
+            };
+        }
+        if (masked.edgeone) {
+            masked.edgeone = {
+                ...masked.edgeone,
+                apiToken: masked.edgeone.apiToken ? '******' : ''
+            };
+        }
+        return masked;
+    }
+
     // 获取部署配置
     use('deploy/config', function (req, res) {
         try {
             const configPath = path.join(hexo.base_dir, 'deploy_config.json');
             let config = {
+                deployType: 'github',
+                enabledPlatforms: ['github'],
                 repository: '',
                 branch: 'main',
                 message: 'Site updated: {{ now("YYYY-MM-DD HH:mm:ss") }}',
                 token: '',
+                cloudflare: {
+                    accountId: '',
+                    projectName: '',
+                    apiToken: ''
+                },
+                edgeone: {
+                    projectName: '',
+                    apiToken: '',
+                    env: 'production'
+                },
                 lastDeployTime: ''
             };
 
             if (fs.existsSync(configPath)) {
                 try {
                     const savedConfig = JSON.parse(fs.readFileSync(configPath));
-                    // 不返回敏感信息如 token
-                    config = {
-                        ...savedConfig,
-                        token: savedConfig.token ? '******' : ''
-                    };
+                    config = maskSensitiveConfig({
+                        ...config,
+                        ...savedConfig
+                    });
                 } catch (e) {
                     console.error('解析部署配置文件失败:', e);
                 }
@@ -65,34 +103,56 @@ module.exports = function (app, hexo, use, db) {
                 }
             }
 
-            // 合并配置，保留现有 token（如果新配置中没有提供）
+            // 合并配置，保留现有敏感信息（如果新配置中没有提供）
             const newConfig = {
                 ...existingConfig,
                 ...req.body,
-                // 如果新配置中的 token 是占位符，则保留原来的 token
-                token: req.body.token === '******' ? existingConfig.token : req.body.token
+                token: req.body.token === '******' ? existingConfig.token : req.body.token,
+                enabledPlatforms: Array.isArray(req.body.enabledPlatforms)
+                    ? req.body.enabledPlatforms
+                    : (existingConfig.enabledPlatforms || ['github'])
             };
+
+            // 合并 cloudflare 配置，保留 apiToken
+            if (req.body.cloudflare) {
+                const existingCf = existingConfig.cloudflare || {};
+                newConfig.cloudflare = {
+                    ...existingCf,
+                    ...req.body.cloudflare,
+                    apiToken: req.body.cloudflare.apiToken === '******'
+                        ? existingCf.apiToken
+                        : req.body.cloudflare.apiToken
+                };
+            }
+
+            // 合并 edgeone 配置，保留 apiToken
+            if (req.body.edgeone) {
+                const existingEo = existingConfig.edgeone || {};
+                newConfig.edgeone = {
+                    ...existingEo,
+                    ...req.body.edgeone,
+                    apiToken: req.body.edgeone.apiToken === '******'
+                        ? existingEo.apiToken
+                        : req.body.edgeone.apiToken
+                };
+            }
 
             // 保存到文件
             fs.writeFileSync(configPath, JSON.stringify(newConfig, null, 2));
 
-            // 更新 _config.yml 文件中的 deploy 配置
-            updateHexoConfig(hexo.base_dir, newConfig);
+            // 仅 github 类型时更新 _config.yml 中的 deploy 配置
+            if (!newConfig.deployType || newConfig.deployType === 'github') {
+                updateHexoConfig(hexo.base_dir, newConfig);
+            }
 
-            // 返回配置（隐藏 token）
-            const safeConfig = {
-                ...newConfig,
-                token: newConfig.token ? '******' : ''
-            };
-
-            res.done(safeConfig);
+            res.done(maskSensitiveConfig(newConfig));
         } catch (error) {
             console.error('保存部署配置失败:', error);
             res.send(500, '保存部署配置失败');
         }
     });
 
-    // 执行部署 - 改为异步方式
+    // 执行部署 - 改为异步方式，支持多平台、请求体传入配置
     use('deploy/execute', function (req, res, next) {
         if (req.method !== 'POST') return next();
 
@@ -108,26 +168,95 @@ module.exports = function (app, hexo, use, db) {
                 }
 
                 const configPath = path.join(hexo.base_dir, 'deploy_config.json');
-                if (!fs.existsSync(configPath)) {
-                    return res.send(400, '部署配置不存在，请先保存配置');
+                let config = {};
+
+                // 若请求体传入 config，先合并保存
+                if (req.body && req.body.config) {
+                    let existingConfig = {};
+                    if (fs.existsSync(configPath)) {
+                        try {
+                            existingConfig = JSON.parse(fs.readFileSync(configPath));
+                        } catch (e) {
+                            console.error('解析现有部署配置文件失败:', e);
+                        }
+                    }
+                    const newConfig = {
+                        ...existingConfig,
+                        ...req.body.config,
+                        token: req.body.config.token === '******' ? existingConfig.token : req.body.config.token
+                    };
+                    if (req.body.config.cloudflare) {
+                        const existingCf = existingConfig.cloudflare || {};
+                        newConfig.cloudflare = {
+                            ...existingCf,
+                            ...req.body.config.cloudflare,
+                            apiToken: req.body.config.cloudflare.apiToken === '******'
+                                ? existingCf.apiToken
+                                : req.body.config.cloudflare.apiToken
+                        };
+                    }
+                    if (req.body.config.edgeone) {
+                        const existingEo = existingConfig.edgeone || {};
+                        newConfig.edgeone = {
+                            ...existingEo,
+                            ...req.body.config.edgeone,
+                            apiToken: req.body.config.edgeone.apiToken === '******'
+                                ? existingEo.apiToken
+                                : req.body.config.edgeone.apiToken
+                        };
+                    }
+                    try {
+                        fs.writeFileSync(configPath, JSON.stringify(newConfig, null, 2));
+                        if (!newConfig.deployType || newConfig.deployType === 'github') {
+                            updateHexoConfig(hexo.base_dir, newConfig);
+                        }
+                    } catch (e) {
+                        console.error('保存部署配置失败:', e);
+                        return res.send(500, '保存部署配置失败');
+                    }
+                    config = newConfig;
+                } else if (fs.existsSync(configPath)) {
+                    try {
+                        config = JSON.parse(fs.readFileSync(configPath));
+                    } catch (e) {
+                        console.error('解析部署配置文件失败:', e);
+                        return res.send(500, '解析部署配置失败');
+                    }
+                } else {
+                    return res.send(400, '部署配置不存在，请先填写并保存配置');
                 }
 
-                let config;
-                try {
-                    config = JSON.parse(fs.readFileSync(configPath));
-                } catch (e) {
-                    console.error('解析部署配置文件失败:', e);
-                    return res.send(500, '解析部署配置失败');
+                // 解析部署目标：deployTargets 优先，兼容 deployType
+                let deployTargets = req.body && req.body.deployTargets;
+                if (!deployTargets && req.body && req.body.deployType) {
+                    deployTargets = [req.body.deployType];
+                }
+                if (!Array.isArray(deployTargets)) {
+                    deployTargets = [config.deployType || 'github'];
+                }
+                deployTargets = deployTargets.filter(t => t === 'github' || t === 'cloudflare-pages' || t === 'edgeone-pages');
+                if (deployTargets.length === 0) {
+                    return res.send(400, '请指定至少一个部署目标');
                 }
 
-                if (!config.repository) {
+                if (deployTargets.includes('github') && !config.repository) {
                     return res.send(400, '缺少仓库地址');
                 }
+                if (deployTargets.includes('cloudflare-pages')) {
+                    const cf = config.cloudflare || {};
+                    if (!cf.accountId || !cf.projectName || !cf.apiToken) {
+                        return res.send(400, '缺少 Cloudflare Pages 配置（Account ID / Project Name / API Token）');
+                    }
+                }
+                if (deployTargets.includes('edgeone-pages')) {
+                    const eo = config.edgeone || {};
+                    if (!eo.projectName || !eo.apiToken) {
+                        return res.send(400, '缺少 EdgeOne Pages 配置（项目名称 / API Token）');
+                    }
+                }
 
-                // 获取跳过生成的设置
                 const skipGenerate = req.body && req.body.skipGenerate === true;
 
-                // 更新部署状态为进行中
                 deployStatusDb.update(
                     { type: 'status' },
                     {
@@ -145,16 +274,12 @@ module.exports = function (app, hexo, use, db) {
                             console.error('更新部署状态失败:', err);
                             return res.send(500, '更新部署状态失败');
                         }
-
-                        // 立即返回响应，不等待部署完成
                         res.done({
                             success: true,
                             message: '部署已开始，请通过状态 API 查询进度',
                             isDeploying: true
                         });
-
-                        // 异步执行部署
-                        executeDeployAsync(hexo.base_dir, deployStatusDb, config, skipGenerate);
+                        executeDeployAsync(hexo.base_dir, deployStatusDb, config, skipGenerate, deployTargets);
                     }
                 );
             });
@@ -275,7 +400,8 @@ module.exports = function (app, hexo, use, db) {
     }
 
     // 辅助函数：异步执行部署过程
-    function executeDeployAsync(baseDir, deployStatusDb, config, skipGenerate) {
+    function executeDeployAsync(baseDir, deployStatusDb, config, skipGenerate, deployTargets) {
+        deployTargets = deployTargets || [config.deployType || 'github'];
         const updateStatus = (update) => {
             return new Promise((resolve, reject) => {
                 deployStatusDb.update(
@@ -295,10 +421,11 @@ module.exports = function (app, hexo, use, db) {
         };
 
         const addLog = (message) => {
-            console.log(message);
+            const cleanMessage = stripAnsi(String(message));
+            console.log(cleanMessage);
             deployStatusDb.findOne({ type: 'status' }, (err, status) => {
                 if (!err && status) {
-                    const logs = [...status.logs, message];
+                    const logs = [...status.logs, cleanMessage];
                     deployStatusDb.update(
                         { type: 'status' },
                         { $set: { logs: logs } },
@@ -549,37 +676,98 @@ module.exports = function (app, hexo, use, db) {
             addLog('deploy.git.success');
         };
 
-        // 开始部署流程
+        // Cloudflare Pages Direct Upload 部署函数
+        const cloudflarePagesDeploy = async (baseDir, config) => {
+            const publicDir = path.join(baseDir, 'public');
+            const cf = config.cloudflare;
+
+            if (!fs.existsSync(publicDir)) {
+                throw new Error('public 目录不存在，请先运行 hexo generate');
+            }
+
+            addLog('deploy.cloudflare.preparing');
+
+            const env = {
+                ...process.env,
+                CLOUDFLARE_ACCOUNT_ID: cf.accountId,
+                CLOUDFLARE_API_TOKEN: cf.apiToken
+            };
+
+            addLog('deploy.cloudflare.uploading');
+            await runCommand('npx', [
+                'wrangler', 'pages', 'deploy', publicDir,
+                '--project-name', cf.projectName
+            ], { cwd: baseDir, env });
+
+            addLog('deploy.cloudflare.success');
+        };
+
+        // EdgeOne Pages Direct Upload 部署函数
+        const edgeonePagesDeploy = async (baseDir, config) => {
+            const publicDir = path.join(baseDir, 'public');
+            const eo = config.edgeone;
+
+            if (!fs.existsSync(publicDir)) {
+                throw new Error('public 目录不存在，请先运行 hexo generate');
+            }
+
+            addLog('deploy.edgeone.preparing');
+
+            const args = [
+                'edgeone', 'pages', 'deploy', publicDir,
+                '-n', eo.projectName,
+                '-t', eo.apiToken
+            ];
+            if (eo.env && eo.env === 'preview') {
+                args.push('-e', 'preview');
+            }
+
+            addLog('deploy.edgeone.uploading');
+            await runCommand('npx', args, { cwd: baseDir });
+
+            addLog('deploy.edgeone.success');
+        };
+
+        // 是否跳过生成：仅当仅部署 GitHub 且 skipGenerate 时为 true
+        const needGenerate = deployTargets.includes('cloudflare-pages') ||
+            deployTargets.includes('edgeone-pages') ||
+            (deployTargets.includes('github') && !skipGenerate);
+        const actualSkipGenerate = skipGenerate && deployTargets.length === 1 && deployTargets[0] === 'github';
+
         (async () => {
             try {
-                if (skipGenerate) {
-                    // 跳过生成模式
+                if (!needGenerate) {
                     addLog('deploy.skip.generate.mode');
-                    
                     await updateStatus({ stage: 'deploying', progress: 30 });
                 } else {
-                    // 标准模式：清理
                     await updateStatus({ stage: 'cleaning', progress: 10 });
                     addLog('deploy.cleaning');
                     await runCommand('npx', ['hexo', 'clean'], { cwd: baseDir });
 
-                    // 生成
                     await updateStatus({ stage: 'generating', progress: 30 });
                     addLog('deploy.generating');
                     await runCommand('npx', ['hexo', 'generate'], { cwd: baseDir });
-                    
                     await updateStatus({ stage: 'deploying', progress: 60 });
                 }
 
-                // 自定义 Git 部署
-                addLog('deploy.deploying');
-                await customGitDeploy(baseDir, config, skipGenerate);
+                for (let i = 0; i < deployTargets.length; i++) {
+                    const target = deployTargets[i];
+                    const progressBase = 60 + Math.floor((i / deployTargets.length) * 35);
+                    await updateStatus({ progress: progressBase });
+                    if (target === 'cloudflare-pages') {
+                        addLog('deploy.cloudflare.deploying');
+                        await cloudflarePagesDeploy(baseDir, config);
+                    } else if (target === 'edgeone-pages') {
+                        addLog('deploy.edgeone.deploying');
+                        await edgeonePagesDeploy(baseDir, config);
+                    } else {
+                        addLog('deploy.deploying');
+                        await customGitDeploy(baseDir, config, actualSkipGenerate);
+                    }
+                }
 
-                // 完成
                 const now = new Date();
                 const formattedTime = formatDateTime(now);
-
-                // 更新配置文件中的最后部署时间
                 config.lastDeployTime = now.toISOString();
                 fs.writeFileSync(
                     path.join(baseDir, 'deploy_config.json'),
@@ -592,7 +780,6 @@ module.exports = function (app, hexo, use, db) {
                     stage: 'completed',
                     lastDeployTime: formattedTime
                 });
-
                 addLog('deploy.success');
             } catch (error) {
                 console.error('部署过程出错:', error);
@@ -601,7 +788,7 @@ module.exports = function (app, hexo, use, db) {
                     stage: 'failed',
                     error: error.message
                 });
-                addLog(`deploy.failed`);
+                addLog('deploy.failed');
                 addLog(error.message);
             }
         })();

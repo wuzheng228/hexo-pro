@@ -11,7 +11,8 @@ class DatabaseManager {
       userDb: null,
       settingsDb: null,
       deployStatusDb: null,
-      recycleDb: null
+      recycleDb: null,
+      themeSchemaCache: null,
     };
     this.hexoInstance = null;
   }
@@ -61,11 +62,12 @@ class DatabaseManager {
     // 并行创建所有数据库
     console.log('[Database Manager]: 创建数据库实例...');
 
-    const [userDb, settingsDb, deployStatusDb, recycleDb] = await Promise.all([
+    const [userDb, settingsDb, deployStatusDb, recycleDb, themeSchemaCache] = await Promise.all([
       this._createDatabase(dataDir, 'users.db'),
       this._createDatabase(dataDir, 'settings.db'),
       this._createDatabase(dataDir, 'deploy_status.db'),
-      this._createDatabase(dataDir, 'recycle.db')
+      this._createDatabase(dataDir, 'recycle.db'),
+      this._createDatabase(dataDir, 'theme_schema_cache.db')
     ]);
 
     // 保存数据库实例
@@ -73,6 +75,7 @@ class DatabaseManager {
     this.databases.settingsDb = settingsDb;
     this.databases.deployStatusDb = deployStatusDb;
     this.databases.recycleDb = recycleDb;
+    this.databases.themeSchemaCache = themeSchemaCache;
 
     console.log('[Database Manager]: 所有数据库实例创建完成');
 
@@ -84,7 +87,7 @@ class DatabaseManager {
   }
 
   _cleanupCorruptedDbFiles(dataDir) {
-    const dbFiles = ['users.db', 'settings.db', 'deploy_status.db', 'recycle.db'];
+    const dbFiles = ['users.db', 'settings.db', 'deploy_status.db', 'recycle.db', 'theme_schema_cache.db'];
 
     dbFiles.forEach(dbFile => {
       const filePath = path.join(dataDir, dbFile);
