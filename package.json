@@ -35,7 +35,7 @@
     "bcrypt-nodejs": "^0.0.3",
     "body-parser": "^1.20.2",
     "browser-sync": "^3.0.4",
-    "cheerio": "^1.0.0",
+    "cheerio": "1.0.0-rc.12",
     "circular-json": "^0.5.9",
     "connect-history-api-fallback": "^2.0.0",
     "cos-nodejs-sdk-v5": "^2.15.4",

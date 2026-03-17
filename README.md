@@ -12,7 +12,7 @@
   </a>
 
   <a href="https://github.com/wuzheng228/hexo-pro/releases">
-    <img src="https://img.shields.io/badge/version-1.3.0-blue" alt="Version">
+    <img src="https://img.shields.io/badge/version-2.0.0-blue" alt="Version">
   </a>
   
   <a href="https://www.npmjs.com/package/hexo-pro">
@@ -96,7 +96,7 @@ parent-directory/
 #### 前置要求
 
 * Node.js 16+
-* Hexo 7.x
+* Hexo 8.x
 
 #### 安装步骤
 
@@ -151,6 +151,16 @@ open http://localhost:4000/pro/
 ---
 
 ## 📅 更新日志
+
+* 2026-03-17 v2.0.0
+
+✅ **🚀 大版本升级** - 核心版本正式升级到 `2.0.0`
+
+✅ **📦 依赖稳定性优化** - 统一并锁定 `cheerio` 版本为 `1.0.0-rc.12`，避免发布阶段 `EOVERRIDE` 冲突
+
+✅ **🔄 发布流程对齐** - 与客户端/桌面端版本策略对齐，便于统一发版与维护
+
+⚠️ **升级建议** - 从 `1.x` 升级到 `2.0.0` 后，建议在项目中重新安装依赖后再启动
 
 * 2025-06-15 v1.2.6
 
