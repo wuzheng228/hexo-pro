@@ -382,7 +382,16 @@ module.exports = function (app, hexo, use) {
 
         var post = hexo.model('Post');
         var postList = post.toArray();
-        var clonedList = _.cloneDeep(postList);
+        var clonedList = postList.map(p => {
+            let temp = p.toObject();
+            // 【修复日期】手动处理日期，从原始对象 p 中获取并转为时间戳
+            if (p.date) temp.date = p.date.valueOf();
+            if (p.updated) temp.updated = p.updated.valueOf();
+            delete temp.prev;
+            delete temp.next;
+            // delete temp.content; // 可选：如果列表页不需要全文，删除此行可进一步提升性能
+            return temp;
+        });
         clonedList.map(addIsDraft);
 
         let finalList = [];
@@ -527,8 +536,13 @@ module.exports = function (app, hexo, use) {
             .then(function (file) {
                 var source = file.path.slice(hexo.source_dir.length)
                 hexo.source.process([source]).then(function () {
-                    var post = _.cloneDeep(hexo.model('Post').findOne({ source: source.replace(/\\/g, '\/') }))
-
+                    var postDoc = hexo.model('Post').findOne({ source: source.replace(/\\/g, '\/') });
+                    var post = postDoc.toObject();
+                    // 【修复日期】手动处理日期
+                    if (postDoc.date) post.date = postDoc.date.valueOf();
+                    if (postDoc.updated) post.updated = postDoc.updated.valueOf();
+                    delete post.prev;
+                    delete post.next;
                     return res.done(addIsDraft(post));
                 });
             });
@@ -563,7 +577,13 @@ module.exports = function (app, hexo, use) {
                 console.log("Posts route: No post found with slug:", id);
                 return next();
             }
-            post = _.cloneDeep(post.data[0])
+            let postDoc = post.data[0]; // 先拿到原始文档对象
+            post = postDoc.toObject();  // 转换为普通对象
+            // 【修复日期】手动处理日期
+            if (postDoc.date) post.date = postDoc.date.valueOf();
+            if (postDoc.updated) post.updated = postDoc.updated.valueOf();
+            delete post.prev;
+            delete post.next;
             // console.log(Object.keys(post))
             // console.log(post.tags)
             // console.log(post.categories)
@@ -594,7 +614,13 @@ module.exports = function (app, hexo, use) {
                 console.log("Posts route: No post found with slug:", id);
                 return next();
             }
-            post = _.cloneDeep(post.data[0])
+            let postDoc = post.data[0]; // 先拿到原始文档对象
+            post = postDoc.toObject();  // 转换为普通对象
+            // 【修复日期】手动处理日期
+            if (postDoc.date) post.date = postDoc.date.valueOf();
+            if (postDoc.updated) post.updated = postDoc.updated.valueOf();
+            delete post.prev;
+            delete post.next;
             // console.log(Object.keys(post))
             // console.log(post.tags)
             // console.log(post.categories)
