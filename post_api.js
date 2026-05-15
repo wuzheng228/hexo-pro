@@ -342,7 +342,12 @@ module.exports = function (app, hexo, use) {
         };
 
         const blogInfoList = loadBlogInfoList()
-        const fuse = new Fuse(blogInfoList, fuseOptions);
+        const includeDraft = req.body.includeDraft !== false && req.body.includeDraft !== 'false'
+        const searchableList = includeDraft
+        ? blogInfoList
+        : blogInfoList.filter(item => item.isDraft !== true && item.isDraft !== 'true')
+
+        const fuse = new Fuse(searchableList, fuseOptions);
 
         const results = fuse.search(req.body.searchPattern)
         // 返回搜索结果
@@ -386,7 +391,9 @@ module.exports = function (app, hexo, use) {
         clonedList.map(addIsDraft);
 
         let finalList = [];
-        if (published == 'true') {
+        if (published === 'all') {
+        finalList = clonedList.filter(post => post.isDiscarded === false);
+        } else if (published == 'true') {
             finalList = clonedList.filter(post => post.isDraft === false && post.isDiscarded === false);
         } else {
             finalList = clonedList.filter(post => post.isDraft === true);
