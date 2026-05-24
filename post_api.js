@@ -344,8 +344,8 @@ module.exports = function (app, hexo, use) {
         const blogInfoList = loadBlogInfoList()
         const includeDraft = req.body.includeDraft !== false && req.body.includeDraft !== 'false'
         const searchableList = includeDraft
-        ? blogInfoList
-        : blogInfoList.filter(item => item.isDraft !== true && item.isDraft !== 'true')
+            ? blogInfoList
+            : blogInfoList.filter(item => item.isDraft !== true && item.isDraft !== 'true')
 
         const fuse = new Fuse(searchableList, fuseOptions);
 
@@ -392,7 +392,7 @@ module.exports = function (app, hexo, use) {
 
         let finalList = [];
         if (published === 'all') {
-        finalList = clonedList.filter(post => post.isDiscarded === false);
+            finalList = clonedList.filter(post => post.isDiscarded === false);
         } else if (published == 'true') {
             finalList = clonedList.filter(post => post.isDraft === false && post.isDiscarded === false);
         } else {
