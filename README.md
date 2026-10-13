@@ -95,8 +95,10 @@ parent-directory/
 
 #### 前置要求
 
-* Node.js 16+
+* Node.js 20.19.0 或更高版本
 * Hexo 8.x
+
+升级到 Hexo 8 前，请先运行 `node -v` 检查版本，并升级到满足要求的 Node.js。Hexo Pro 使用 Hexo 8 的正常依赖，不需要降级 `strip-ansi`。
 
 #### 安装步骤
 
@@ -115,8 +117,11 @@ open http://localhost:4000/pro/
 
 #### 系统要求
 
-* Windows 10+ / macOS 10.14+ / Ubuntu 18.04+
-* Node.js 16+
+* Windows 10+ / macOS 12+ / Linux（具体发行版要求见桌面端 README）
+* 预构建桌面客户端自带 Node.js，运行时无需单独安装 Node.js
+* 从源码安装依赖或开发桌面端时，需要 Node.js 22.12.0 或更高版本
+
+桌面端通过 Electron 内置的 Node.js 运行 Hexo。使用 Hexo 8 时，请更新到内置 Node.js 满足要求的桌面客户端；升级系统上的 Node.js 不会改变旧桌面客户端的运行环境。
 
 #### 安装与启动
 
@@ -275,4 +280,4 @@ MIT © wuzheng
 - **数据库**：NeDB (嵌入式数据库)
 - **前端**：React (hexo-pro-client)
 - **桌面端**：Electron (hexo-pro-desktop)
-- **核心依赖**：Hexo 7.x, Fuse.js, Multer 等
+- **核心依赖**：Hexo 8.x, Fuse.js, Multer 等

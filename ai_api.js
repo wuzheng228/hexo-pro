@@ -1,5 +1,14 @@
-const jwt = require('jsonwebtoken');
 const axios = require('axios');
+
+function normalizeEndpoint(value) {
+    if (typeof value !== 'string') throw new Error('请输入有效的 AI API URL');
+    if (!value.trim()) return '';
+    const endpoint = new URL(value.trim());
+    if (!['http:', 'https:'].includes(endpoint.protocol) || endpoint.username || endpoint.password || endpoint.hash) {
+        throw new Error('AI API URL 须使用 HTTP 或 HTTPS，且不能包含账号密码或片段');
+    }
+    return endpoint.href;
+}
 
 const DEFAULT_SYSTEM_PROMPT = `你是一位专业的 Hexo 博客创作助手。你的任务是帮助用户撰写、润色和优化博客文章。
 
@@ -70,7 +79,14 @@ module.exports = function (app, hexo, use, db) {
             });
         }
 
-        const { url, apiKey, model } = settings;
+        let url;
+        try {
+            url = normalizeEndpoint(settings.url);
+            if (settings.apiKeyEndpoint && normalizeEndpoint(settings.apiKeyEndpoint) !== url) {
+                throw new Error('AI API URL 已改变，请重新填写 API Key');
+            }
+        } catch (error) { return res.send(400, error.message); }
+        const { apiKey, model } = settings;
         const systemPrompt = (settings.systemPrompt || '').trim();
         const finalMessages = systemPrompt
             ? [{ role: 'system', content: systemPrompt }, ...messages]
@@ -99,11 +115,17 @@ module.exports = function (app, hexo, use, db) {
                         'Authorization': `Bearer ${apiKey}`
                     },
                     responseType: 'stream',
-                    maxRedirects: 5,
+                    // A redirect must not move a stored credential to another endpoint.
+                    maxRedirects: 0,
                     validateStatus: (status) => status < 500
                 });
 
                 console.log('[Hexo Pro AI Proxy]: 上游响应状态:', response.status);
+
+                if (response.status >= 300 && response.status < 400) {
+                    response.data?.destroy?.();
+                    return res.send(400, 'AI API URL 返回重定向，请填写最终接口地址并重新确认 API Key');
+                }
 
                 if (response.status >= 400) {
                     let upstreamPayload = response.data;
@@ -181,11 +203,14 @@ module.exports = function (app, hexo, use, db) {
                         'Content-Type': 'application/json',
                         'Authorization': `Bearer ${apiKey}`
                     },
-                    maxRedirects: 5,
+                    maxRedirects: 0,
                     validateStatus: (status) => status < 500
                 });
 
                 console.log('[Hexo Pro AI Proxy]: 上游响应状态:', response.status);
+                if (response.status >= 300 && response.status < 400) {
+                    return res.send(400, 'AI API URL 返回重定向，请填写最终接口地址并重新确认 API Key');
+                }
                 if (response.status >= 400) {
                     const upstreamMsg = normalizeUpstreamErrorMessage(
                         response.data,
@@ -260,10 +285,15 @@ module.exports = function (app, hexo, use, db) {
     use('ai/settings/save', function (req, res) {
         const { settingsDb } = db;
         const { url, apiKey, model, enableThinking, maxTokens, temperature, topP, systemPrompt } = req.body;
+        let endpoint;
+        try { endpoint = normalizeEndpoint(url); }
+        catch (error) { return res.send(400, error.message); }
+        if (apiKey !== undefined && typeof apiKey !== 'string') return res.send(400, 'API Key 格式无效');
 
         const settingsData = {
             type: 'ai',
-            url,
+            url: endpoint,
+            apiKeyEndpoint: endpoint,
             apiKey,
             model,
             enableThinking: enableThinking || false,
@@ -285,7 +315,13 @@ module.exports = function (app, hexo, use, db) {
             if (existing) {
                 // 如果 apiKey 为空或只是掩码，保留原来的
                 if (!apiKey || apiKey.startsWith('****')) {
-                    settingsData.apiKey = existing.apiKey;
+                    let previousEndpoint;
+                    try { previousEndpoint = normalizeEndpoint(existing.apiKeyEndpoint || existing.url || ''); }
+                    catch { previousEndpoint = null; }
+                    if (endpoint && endpoint !== previousEndpoint && existing.apiKey) {
+                        return res.send(400, 'AI API URL 已改变，请重新填写 API Key，旧凭据不会发送到新地址');
+                    }
+                    settingsData.apiKey = endpoint ? existing.apiKey : '';
                 }
 
                 settingsDb.update({ type: 'ai' }, { $set: settingsData }, {}, (err) => {
@@ -301,6 +337,7 @@ module.exports = function (app, hexo, use, db) {
                     });
                 });
             } else {
+                if (apiKey && apiKey.startsWith('****')) settingsData.apiKey = '';
                 settingsData.createdAt = new Date();
                 settingsDb.insert(settingsData, (err) => {
                     if (err) {

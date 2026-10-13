@@ -52,6 +52,11 @@ function getLiveHexo(hexo) {
   return getRuntime(hexo).hexo;
 }
 
+// A render must finish with the same theme even if a switch happens meanwhile.
+function getActiveHexo(hexo) {
+  return getRuntime(hexo).current;
+}
+
 function clearThemeModules(themeDir) {
   const prefixes = [path.resolve(themeDir) + path.sep];
   if (fs.existsSync(themeDir)) prefixes.push(fs.realpathSync(themeDir) + path.sep);
@@ -210,4 +215,4 @@ async function switchTheme(hexo, theme) {
   }
 }
 
-module.exports = { getLiveHexo, switchTheme };
+module.exports = { getLiveHexo, getActiveHexo, switchTheme };

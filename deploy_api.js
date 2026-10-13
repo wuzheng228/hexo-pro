@@ -4,6 +4,10 @@ const fse = require('fs-extra');
 const { exec, spawn } = require('child_process');
 const utils = require('./utils');
 const yaml = require('js-yaml');
+const { copySourceProject } = require('./source_sync');
+
+// A partial form submission must never erase an already saved credential.
+const keepCredential = (value, previous) => value === undefined || value === '******' ? previous : value;
 
 module.exports = function (app, hexo, use, db) {
     // 使用传入的统一数据库实例，而不是创建自己的
@@ -107,7 +111,7 @@ module.exports = function (app, hexo, use, db) {
             const newConfig = {
                 ...existingConfig,
                 ...req.body,
-                token: req.body.token === '******' ? existingConfig.token : req.body.token,
+                token: keepCredential(req.body.token, existingConfig.token),
                 enabledPlatforms: Array.isArray(req.body.enabledPlatforms)
                     ? req.body.enabledPlatforms
                     : (existingConfig.enabledPlatforms || ['github'])
@@ -119,9 +123,7 @@ module.exports = function (app, hexo, use, db) {
                 newConfig.cloudflare = {
                     ...existingCf,
                     ...req.body.cloudflare,
-                    apiToken: req.body.cloudflare.apiToken === '******'
-                        ? existingCf.apiToken
-                        : req.body.cloudflare.apiToken
+                    apiToken: keepCredential(req.body.cloudflare.apiToken, existingCf.apiToken)
                 };
             }
 
@@ -131,9 +133,7 @@ module.exports = function (app, hexo, use, db) {
                 newConfig.edgeone = {
                     ...existingEo,
                     ...req.body.edgeone,
-                    apiToken: req.body.edgeone.apiToken === '******'
-                        ? existingEo.apiToken
-                        : req.body.edgeone.apiToken
+                    apiToken: keepCredential(req.body.edgeone.apiToken, existingEo.apiToken)
                 };
             }
 
@@ -183,16 +183,14 @@ module.exports = function (app, hexo, use, db) {
                     const newConfig = {
                         ...existingConfig,
                         ...req.body.config,
-                        token: req.body.config.token === '******' ? existingConfig.token : req.body.config.token
+                        token: keepCredential(req.body.config.token, existingConfig.token)
                     };
                     if (req.body.config.cloudflare) {
                         const existingCf = existingConfig.cloudflare || {};
                         newConfig.cloudflare = {
                             ...existingCf,
                             ...req.body.config.cloudflare,
-                            apiToken: req.body.config.cloudflare.apiToken === '******'
-                                ? existingCf.apiToken
-                                : req.body.config.cloudflare.apiToken
+                            apiToken: keepCredential(req.body.config.cloudflare.apiToken, existingCf.apiToken)
                         };
                     }
                     if (req.body.config.edgeone) {
@@ -200,9 +198,7 @@ module.exports = function (app, hexo, use, db) {
                         newConfig.edgeone = {
                             ...existingEo,
                             ...req.body.config.edgeone,
-                            apiToken: req.body.config.edgeone.apiToken === '******'
-                                ? existingEo.apiToken
-                                : req.body.config.edgeone.apiToken
+                            apiToken: keepCredential(req.body.config.edgeone.apiToken, existingEo.apiToken)
                         };
                     }
                     try {
@@ -420,8 +416,15 @@ module.exports = function (app, hexo, use, db) {
             });
         };
 
+        const redact = message => {
+            let text = stripAnsi(String(message));
+            for (const token of [config.token, config.cloudflare?.apiToken, config.edgeone?.apiToken].filter(Boolean)) {
+                text = text.split(token).join('[已隐藏凭据]').split(encodeURIComponent(token)).join('[已隐藏凭据]');
+            }
+            return text.replace(/https?:\/\/[^\s/@]+@github\.com/gi, 'https://github.com');
+        };
         const addLog = (message) => {
-            const cleanMessage = stripAnsi(String(message));
+            const cleanMessage = redact(message);
             console.log(cleanMessage);
             deployStatusDb.findOne({ type: 'status' }, (err, status) => {
                 if (!err && status) {
@@ -441,22 +444,14 @@ module.exports = function (app, hexo, use, db) {
                 let finalArgs = args;
                 let mergedOptions = { 
                     ...options,
-                    shell: true,
+                    shell: command !== 'git',
+                    env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
                     windowsVerbatimArguments: false
                 };
 
-                // 对于 git commit 命令，使用特殊处理避免 shell 解析问题
-                if (command === 'git' && args[0] === 'commit' && args.includes('-m')) {
-                    const messageIndex = args.indexOf('-m') + 1;
-                    if (messageIndex < args.length) {
-                        // 创建新的参数数组，确保提交消息被正确引用
-                        finalArgs = [...args];
-                        finalArgs[messageIndex] = `"${args[messageIndex]}"`;
-                    }
-                }
-
                 addLog(`run command: ${finalCommand} ${finalArgs.join(' ')}`);
                 const proc = spawn(finalCommand, finalArgs, mergedOptions);
+                let stderr = '';
 
                 proc.stdout.on('data', (data) => {
                     addLog(data.toString().trim());
@@ -464,6 +459,7 @@ module.exports = function (app, hexo, use, db) {
 
                 proc.stderr.on('data', (data) => {
                     const message = data.toString().trim();
+                    stderr = (stderr + '\n' + message).slice(-4000);
                     if (message.includes('Waiting for the debugger to disconnect')) {
                         addLog(message);
                     } else {
@@ -475,7 +471,8 @@ module.exports = function (app, hexo, use, db) {
                     if (code === 0) {
                         resolve();
                     } else {
-                        reject(new Error(`命令执行失败，退出码: ${code}`));
+                        const authFailure = /could not read Username|Authentication failed|Invalid username or token/i.test(stderr);
+                        reject(new Error(authFailure ? 'GitHub 身份验证失败，请重新填写并保存访问凭据后再试' : redact(stderr.trim() || `命令执行失败，退出码: ${code}`)));
                     }
                 });
 
@@ -489,11 +486,11 @@ module.exports = function (app, hexo, use, db) {
         // 自定义 Git 部署函数
         const customGitDeploy = async (baseDir, config, skipGenerate = false) => {
             const deployDir = path.join(baseDir, '.deploy_git');
-            const publicDir = path.join(baseDir, 'public');
+            const publicDir = path.resolve(baseDir, hexo.config.public_dir || 'public');
             
             // 构建仓库URL
             const repoUrl = config.token
-                ? `https://${config.token}@github.com/${config.repository}.git`
+                ? `https://x-access-token:${encodeURIComponent(config.token)}@github.com/${config.repository}.git`
                 : `https://github.com/${config.repository}.git`;
 
             // 处理提交消息
@@ -581,68 +578,8 @@ module.exports = function (app, hexo, use, db) {
             }
 
             if (skipGenerate) {
-                // 跳过生成模式：复制源代码文件到 deploy 目录
-                const filesToCopy = [
-                    'source',
-                    'themes',
-                    'package.json',
-                    'scaffolds'
-                ];
-                
-                for (const item of filesToCopy) {
-                    const sourcePath = path.join(baseDir, item);
-                    const destPath = path.join(deployDir, item);
-                    
-                    if (fs.existsSync(sourcePath)) {
-                        await fse.copy(sourcePath, destPath, {
-                            filter: (src, dest) => {
-                                // 不复制 .git 目录和 node_modules
-                                return !src.includes('.git') && !src.includes('node_modules');
-                            }
-                        });
-                    }
-                }
-                
-                // 特殊处理 _config.yml，移除敏感信息
-                const configPath = path.join(baseDir, '_config.yml');
-                const deployConfigPath = path.join(deployDir, '_config.yml');
-                
-                if (fs.existsSync(configPath)) {
-                    try {
-                        // 读取原始配置
-                        const configContent = fse.readFileSync(configPath, 'utf-8');
-                        let configObj = yaml.load(configContent);
-                        
-                        // 清理 deploy 配置中的敏感信息
-                        if (configObj.deploy) {
-                            if (configObj.deploy.repo && typeof configObj.deploy.repo === 'string') {
-                                // 移除 repo URL 中的 token
-                                configObj.deploy.repo = configObj.deploy.repo.replace(/https:\/\/[^@]+@github\.com\//, 'https://github.com/');
-                            }
-                        }
-                        
-                        // 写入清理后的配置
-                        const cleanConfigContent = yaml.dump(configObj);
-                        fs.writeFileSync(deployConfigPath, cleanConfigContent, 'utf-8');
-                        
-                        addLog('deploy.git.config.cleaned');
-                    } catch (error) {
-                        console.error('处理 _config.yml 失败:', error);
-                        // 如果处理失败，直接复制原文件（可能会触发 GitHub 保护）
-                        await fse.copy(configPath, deployConfigPath);
-                    }
-                }
-                
-                // 复制其他可能存在的配置文件
-                const optionalFiles = ['_config.landscape.yml', '_config.next.yml', 'yarn.lock', 'package-lock.json'];
-                for (const file of optionalFiles) {
-                    const sourcePath = path.join(baseDir, file);
-                    const destPath = path.join(deployDir, file);
-                    
-                    if (fs.existsSync(sourcePath)) {
-                        await fse.copy(sourcePath, destPath);
-                    }
-                }
+                await copySourceProject(baseDir, deployDir, { publicDir });
+                addLog('deploy.git.config.cleaned');
             } else {
                 // 标准模式：复制 public 目录内容到 deploy 目录
                 await fse.copy(publicDir, deployDir, {
@@ -728,11 +665,10 @@ module.exports = function (app, hexo, use, db) {
             addLog('deploy.edgeone.success');
         };
 
-        // 是否跳过生成：仅当仅部署 GitHub 且 skipGenerate 时为 true
+        // Other platforms may need a build while GitHub still receives the selected source snapshot.
         const needGenerate = deployTargets.includes('cloudflare-pages') ||
             deployTargets.includes('edgeone-pages') ||
             (deployTargets.includes('github') && !skipGenerate);
-        const actualSkipGenerate = skipGenerate && deployTargets.length === 1 && deployTargets[0] === 'github';
 
         (async () => {
             try {
@@ -762,7 +698,7 @@ module.exports = function (app, hexo, use, db) {
                         await edgeonePagesDeploy(baseDir, config);
                     } else {
                         addLog('deploy.deploying');
-                        await customGitDeploy(baseDir, config, actualSkipGenerate);
+                        await customGitDeploy(baseDir, config, skipGenerate);
                     }
                 }
 

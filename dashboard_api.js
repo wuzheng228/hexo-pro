@@ -2,6 +2,7 @@ const path = require('path')
 const fs = require('hexo-fs')
 const fse = require('fs-extra');
 const _ = require('lodash')
+const { ensureDocumentId } = require('./document_identity');
 const axios = require('axios'); // 需要安装axios
 
 module.exports = function (app, hexo, use) {
@@ -95,6 +96,7 @@ module.exports = function (app, hexo, use) {
                 return {
                     title: post.title,
                     permalink: post.permalink,
+                    documentId: ensureDocumentId(hexo, post),
                     date: formatDateTime(post.date),
                     updated: post.updated ? formatDateTime(post.updated) : null,
                     isDraft: isDraft

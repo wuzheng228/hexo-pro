@@ -1,4 +1,5 @@
 'use strict';
+require('./node-runtime').assertSupportedNode();
 var serveStatic = require('serve-static');
 var path = require('path');
 var api = require('./api');
@@ -8,6 +9,7 @@ const mime = require('mime')
 // 添加查询字符串解析中间件
 const querystring = require('querystring');
 const crypto = require('crypto');
+const { lookupDocumentId } = require('./document_identity');
 
 // 修改：不再从 _config.yml 获取登录信息，而是在 api 中根据数据库判断
 let needLogin = false; // 默认不需要登录，将在 api.js 中根据数据库内容决定
@@ -39,13 +41,18 @@ function staticMiddleware(rootDir) {
 
 
 function buildIndex() {
+    const identity = (document, kind) => {
+        try { return lookupDocumentId(hexo, document, kind); }
+        catch { return null; }
+    };
     class BlogInfo {
-        constructor(title, content, isPage, isDraft, permalink) {
+        constructor(title, content, isPage, isDraft, permalink, documentId) {
             this.title = title
             this.content = content
             this.isPage = isPage
             this.isDraft = isDraft
             this.permalink = permalink
+            this.documentId = documentId
         }
     }
 
@@ -55,11 +62,11 @@ function buildIndex() {
     const blogInfoList = []
 
     posts.forEach((post, _) => {
-        blogInfoList.push(new BlogInfo(post.title, post.content, false, !post.published, post.permalink))
+        blogInfoList.push(new BlogInfo(post.title, post.content, false, !post.published, post.permalink, identity(post, 'Post')))
     })
 
     pages.forEach((page, _) => {
-        blogInfoList.push(new BlogInfo(page.title, page.content, true, false, page.permalink))
+        blogInfoList.push(new BlogInfo(page.title, page.content, true, false, page.permalink, identity(page, 'Page')))
     })
 
     fs.writeFileSync(path.join(hexo.base_dir, 'blogInfoList.json'), JSON.stringify(blogInfoList))
