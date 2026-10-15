@@ -1,0 +1,2 @@
+"use strict";(self.webpackChunkhexo_pro_client=self.webpackChunkhexo_pro_client||[]).push([[7892],{47892:(e,n,t)=>{t.r(n),t.d(n,{default:()=>i});var r=t(96540),c=t(677),a=t(34555),l=t(68777),u=t(138),p=t(47767);function i(){var e=(0,p.Zp)();return r.createElement(c.A,null,r.createElement(a.A.Paragraph,{type:"secondary"},"云同步已有独立入口，可以检查本机与 GitHub 的文件差异，并与手机同步文章、主题和配置。"),r.createElement(l.Ay,{type:"primary",icon:r.createElement(u.A,null),onClick:function(){return e("/sync")}},"打开云同步"))}}}]);
+//# sourceMappingURL=789267479d3373.chunk.js.map

@@ -13,9 +13,11 @@ const theme_api = require('./theme_api'); // 主题市场API
 const { getLiveHexo } = require('./theme_runtime');
 const mcp_api = require('./mcp_api'); // MCP Agent API
 const sync_api = require('./sync_api'); // GitHub 云同步API
+const preview_api = require('./preview_api');
+const { prepareDocumentIds } = require('./document_identity');
 const CircularJSON = require('circular-json');
 const crypto = require('crypto');
-const { expressjwt: jwt } = require('express-jwt'); // 确保引入 express-jwt
+const { createAuthMiddleware } = require('./auth_security');
 const bodyParser = require('body-parser');
 const databaseManager = require('./database-manager'); // 导入数据库管理器
 
@@ -52,6 +54,10 @@ module.exports = async function (app, hexo) { // 将导出函数改为 async
         next();
     });
 
+    const invoke = (fn, req, res, next) => {
+        try { Promise.resolve(fn(req, res, next)).catch(next); }
+        catch (error) { next(error); }
+    };
     var use = function (path, fn) {
         // 检查路径中是否包含参数（如 :id）
         if (path.includes(':')) {
@@ -107,7 +113,7 @@ module.exports = async function (app, hexo) { // 将导出函数改为 async
                     }
 
                     // 调用处理函数
-                    fn(req, res, next);
+                    invoke(fn, req, res, next);
                 } else {
                     // 如果不匹配，继续下一个中间件
                     next();
@@ -153,7 +159,7 @@ module.exports = async function (app, hexo) { // 将导出函数改为 async
                     res.setHeader('Content-type', 'application/json; charset=utf-8')
                     return res.end(CircularJSON.stringify(data))
                 }
-                fn(req, res, next)
+                invoke(fn, req, res, next)
             })
         }
     }
@@ -220,11 +226,6 @@ module.exports = async function (app, hexo) { // 将导出函数改为 async
             `${apiBasePath}/auth/status`, // 添加认证状态检查路径到排除列表
             `${apiBasePath}/desktop/status`, // 添加桌面端状态API到排除列表
             `${apiBasePath}/desktop/auth-check`, // 添加桌面端认证检查API到排除列表
-            `${apiBasePath}/desktop/save-token`, // 添加桌面端保存token API到排除列表
-            `${apiBasePath}/ai/chat`, // AI 聊天代理接口（解决 CORS 问题）
-            `${apiBasePath}/ai/settings`, // AI 设置接口
-            `${apiBasePath}/ai/settings/save`, // AI 设置保存接口
-            `${apiBasePath}/theme/schema/generate`, // 主题 Schema 生成接口
             `${apiBasePath}/mcp/agent/posts/list`,
             `${apiBasePath}/mcp/agent/posts/search`,
             `${apiBasePath}/mcp/agent/posts/get`,
@@ -237,25 +238,13 @@ module.exports = async function (app, hexo) { // 将导出函数改为 async
         ];
 
 
-        if (global.actualNeedLogin) {
-            console.log('启用JWT验证，secret:', global.jwtSecret ? '已设置' : '未设置');
-            console.log('排除的路径:', unlessPaths);
+        // Always install authentication: registration and password changes take effect
+        // on the next request, without restarting the server or caching a stale secret.
+        app.use(apiBasePath, createAuthMiddleware(db, unlessPaths));
 
-            if (!global.jwtSecret) {
-                // 理论上不应该发生，因为上面已经处理了生成逻辑
-                console.error('[Hexo Pro API]: 严重错误 - JWT Secret 未能生成或加载!');
-                global.jwtSecret = crypto.randomBytes(64).toString('hex'); // 再次尝试生成以防万一
-            }
-
-            // 使用更简单的路径匹配方式
-            app.use(apiBasePath, jwt({ // 应用于 /hexopro/api 基础路径
-                secret: global.jwtSecret,
-                algorithms: ["HS256"],
-                requestProperty: 'auth' // 确保将解码后的token信息存储在req.auth中
-            }).unless({ path: unlessPaths })); // 排除特定路径
-        } else {
-            console.log('[Hexo Pro API]: 未启用JWT验证');
-        }
+        // Migrate identities only when the management server is used.
+        try { prepareDocumentIds(hexo); }
+        catch (error) { hexo.log.warn('[Hexo Pro] ' + error.message); }
 
         // 注册所有 API 路由
         login_api(app, hexo, use, db); // 移除不再需要的参数
@@ -267,11 +256,12 @@ module.exports = async function (app, hexo) { // 将导出函数改为 async
         deploy_api(app, hexo, use, db); // 传递数据库实例到部署API
         settings_api(app, hexo, use, db); // 注册设置API
         recycle_api(app, hexo, use, db); // 注册回收站API
-        auth_api(app, hexo, use); // 注册认证API
+        auth_api(app, hexo, use, db); // 注册认证API
         ai_api(app, hexo, use, db); // 注册 AI 代理API
         theme_api(app, hexo, use, db); // 注册主题市场API
         mcp_api(app, hexo, use, db); // 注册 MCP Agent API
         sync_api(app, hexo, use, db); // 注册 GitHub 云同步API
+        preview_api(app, hexo, use);
 
 
         app.use((err, req, res, next) => {
@@ -283,8 +273,8 @@ module.exports = async function (app, hexo) { // 将导出函数改为 async
             } else {
                 console.error('[Hexo Pro API]: 未知错误:', err.message); // 添加日志记录
                 res.setHeader('Content-type', 'application/json')
-                res.statusCode = 500
-                res.end(JSON.stringify({ code: 500, msg: 'unknown err:' + err.message })) // 返回错误消息
+                res.statusCode = err.statusCode || 500
+                res.end(JSON.stringify({ code: res.statusCode, msg: err.message }))
             }
         })
 

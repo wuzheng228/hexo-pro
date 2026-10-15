@@ -1,147 +1,73 @@
-const {
-  createSyncService,
-  maskSyncConfig,
-  parseGitStatus,
-  runBidirectionalWorkflow,
-  runCommandDefault,
-  runPullWorkflow,
-  runPushWorkflow
-} = require('./sync_service');
+const fs = require('fs');
+const path = require('path');
+const { createSyncService, maskSyncConfig } = require('./sync_service');
+const { createCloudSync } = require('./cloud_sync');
+const { prepareDocumentIds } = require('./document_identity');
 
 module.exports = function (app, hexo, use) {
   const service = createSyncService(hexo.base_dir);
-  let status = {
-    isSyncing: false,
-    stage: 'idle',
-    logs: [],
-    error: null,
-    lastSyncTime: ''
-  };
+  const cloud = createCloudSync(hexo.base_dir, { publicDir: path.resolve(hexo.base_dir, hexo.config.public_dir || 'public'), sourceDir: hexo.config.source_dir || 'source' });
+  let status = { isSyncing: false, stage: 'idle', logs: [], error: null, lastSyncTime: '' };
 
-  function addLog(message) {
-    const text = String(message || '');
-    console.log(`[Hexo Pro Sync]: ${text}`);
-    status.logs = [...(status.logs || []), text].slice(-200);
+  function deployConfig() {
+    try { return JSON.parse(fs.readFileSync(path.join(hexo.base_dir, 'deploy_config.json'), 'utf8')); }
+    catch { return {}; }
   }
-
-  function setStatus(update) {
-    status = {
-      ...status,
-      ...update
-    };
+  function publicConfig() {
+    const config = service.readConfig(), deploy = deployConfig();
+    return { ...maskSyncConfig(config), projectPath: hexo.base_dir,
+      suggestedRepository: deploy.repository || '', suggestedBranch: deploy.branch || 'main', hasDeployCredential: Boolean(deploy.token) };
   }
-
   function sendError(res, error) {
-    console.error('[Hexo Pro Sync]:', error);
-    setStatus({
-      isSyncing: false,
-      stage: 'failed',
-      error: error.message
+    status = { ...status, isSyncing: false, stage: 'failed', error: error.message };
+    res.send(error.statusCode || 500, error.message || '云同步失败');
+  }
+  function post(name, handler) {
+    use(name, async (req, res, next) => {
+      if (req.method !== 'POST') return next();
+      if (status.isSyncing) return res.send(409, '云同步正在进行，请稍后再试');
+      try { await handler(req, res); } catch (error) { sendError(res, error); }
     });
-    res.send(500, error.message || '同步失败');
+  }
+  async function run(res, stage, callback) {
+    status = { ...status, isSyncing: true, stage, error: null, logs: [] };
+    const result = await callback();
+    status = { ...status, isSyncing: false, stage: stage === 'syncing' ? 'completed' : 'ready', error: null };
+    if (result.lastSyncTime) {
+      service.saveConfig({ lastSyncTime: result.lastSyncTime });
+      status.lastSyncTime = result.lastSyncTime;
+    }
+    res.done(result);
   }
 
-  function getConfig() {
-    return service.readConfig();
-  }
-
-  async function runWorkflow(res, stage, workflow) {
-    if (status.isSyncing) {
-      return res.send(400, '云同步正在进行中，请稍后再试');
+  use('sync/config', (req, res) => res.done(publicConfig()));
+  use('sync/status', (req, res) => {
+    const config = service.readConfig();
+    res.done({ ...status, hasRepository: Boolean(config.repository), hasGithubToken: Boolean(config.githubToken),
+      lastSyncTime: config.lastSyncTime, projectPath: hexo.base_dir });
+  });
+  post('sync/save-config', async (req, res) => { service.saveConfig(req.body || {}); res.done(publicConfig()); });
+  post('sync/token/clear', async (req, res) => { service.saveConfig({ githubToken: '' }); res.done(publicConfig()); });
+  post('sync/import-deploy', async (req, res) => {
+    const deploy = deployConfig();
+    if (!deploy.repository) throw new Error('尚未配置 GitHub 部署仓库');
+    service.saveConfig({ repository: deploy.repository, branch: deploy.branch || 'main', githubToken: deploy.token || '' });
+    res.done(publicConfig());
+  });
+  post('sync/check', (req, res) => run(res, 'checking', () => cloud.check(service.readConfig())));
+  post('sync/preview', (req, res) => run(res, 'checking', () => {
+    if (typeof hexo.model === 'function') prepareDocumentIds(hexo);
+    return cloud.preview(service.readConfig());
+  }));
+  post('sync/diff', async (req, res) => res.done(cloud.diff(req.body?.id, req.body?.path)));
+  post('sync/apply', (req, res) => run(res, 'syncing', async () => {
+    const result = await cloud.apply(service.readConfig(), req.body?.id, req.body?.resolutions);
+    if (result.downloaded && typeof hexo.source?.process === 'function') {
+      try { await hexo.source.process(); }
+      catch { result.refreshWarning = '文件已同步，文章列表刷新失败，请重新打开博客'; }
     }
-
-    setStatus({
-      isSyncing: true,
-      stage,
-      error: null,
-      logs: []
-    });
-
-    try {
-      const config = getConfig();
-      await workflow({
-        baseDir: hexo.base_dir,
-        config,
-        runCommand: runCommandDefault,
-        addLog
-      });
-
-      const now = new Date().toISOString();
-      service.saveConfig({ ...config, lastSyncTime: now });
-      setStatus({
-        isSyncing: false,
-        stage: 'completed',
-        lastSyncTime: now
-      });
-      res.done({
-        success: true,
-        status
-      });
-    } catch (error) {
-      sendError(res, error);
-    }
-  }
-
-  use('sync/config', function (req, res) {
-    res.done(maskSyncConfig(getConfig()));
-  });
-
-  use('sync/save-config', function (req, res, next) {
-    if (req.method !== 'POST') return next();
-
-    try {
-      const saved = service.saveConfig(req.body || {});
-      res.done(maskSyncConfig(saved));
-    } catch (error) {
-      sendError(res, error);
-    }
-  });
-
-  use('sync/status', async function (req, res) {
-    const config = getConfig();
-    let gitStatus = { dirty: false, files: [] };
-
-    try {
-      const output = await runCommandDefault('git', ['status', '--porcelain'], { cwd: hexo.base_dir });
-      gitStatus = parseGitStatus(output);
-    } catch (error) {
-      gitStatus = { dirty: false, files: [], unavailable: true };
-    }
-
-    res.done({
-      ...status,
-      lastSyncTime: config.lastSyncTime || status.lastSyncTime,
-      hasRepository: Boolean(config.repository),
-      hasGithubToken: Boolean(config.githubToken),
-      gitStatus
-    });
-  });
-
-  use('sync/token/clear', function (req, res, next) {
-    if (req.method !== 'POST') return next();
-
-    try {
-      const saved = service.saveConfig({
-        githubToken: ''
-      });
-      res.done(maskSyncConfig(saved));
-    } catch (error) {
-      sendError(res, error);
-    }
-  });
-
-  use('sync/push', function (req, res, next) {
-    if (req.method !== 'POST') return next();
-    return runWorkflow(res, 'pushing', runPushWorkflow);
-  });
-
-  use('sync/pull', function (req, res, next) {
-    if (req.method !== 'POST') return next();
-    return runWorkflow(res, 'pulling', runPullWorkflow);
-  });
-
-  use('sync/run', function (req, res, next) {
-    if (req.method !== 'POST') return next();
-    return runWorkflow(res, 'syncing', runBidirectionalWorkflow);
-  });
+    return result;
+  }));
+  // Older callers must review changes instead of silently rewriting the project's Git checkout.
+  for (const action of ['push', 'pull', 'run']) post(`sync/${action}`, async (req, res) => res.send(409, '请前往云同步页面，检查变更后再同步'));
 };

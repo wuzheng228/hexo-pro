@@ -16,13 +16,19 @@ function createResponse() {
 }
 
 function createHexo(posts, baseDir) {
+    for (const post of posts) {
+        const file = path.join(baseDir, 'source', post.source)
+        fs.mkdirSync(path.dirname(file), { recursive: true })
+        fs.writeFileSync(file, post.raw)
+    }
     return {
         base_dir: baseDir,
+        source_dir: path.join(baseDir, 'source'),
         model(name) {
-            assert.equal(name, 'Post')
+            assert.ok(['Post', 'Page'].includes(name))
             return {
                 toArray() {
-                    return posts
+                    return name === 'Post' ? posts : []
                 }
             }
         }
@@ -52,6 +58,7 @@ function searchBlog(handlers, body) {
 function makePost(title, source, date) {
     return {
         title,
+        raw: `---\ntitle: ${title}\n---\n${title}\n`,
         source,
         date,
         updated: date,
@@ -60,13 +67,15 @@ function makePost(title, source, date) {
     }
 }
 
-test('posts/list published=all returns published and draft posts without discarded posts', () => {
+test('posts/list published=all returns published and draft posts without discarded posts', t => {
     const posts = [
         makePost('published', '_posts/published.md', '2024-01-01T00:00:00.000Z'),
         makePost('draft', '_drafts/draft.md', '2024-01-02T00:00:00.000Z'),
         makePost('discarded', '_discarded/123/discarded.md', '2024-01-03T00:00:00.000Z')
     ]
-    const handlers = registerHandlers(createHexo(posts, os.tmpdir()))
+    const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hexo-pro-visibility-'))
+    t.after(() => fs.rmSync(baseDir, { recursive: true, force: true }))
+    const handlers = registerHandlers(createHexo(posts, baseDir))
 
     const result = listPosts(handlers, 'published=all')
 
@@ -74,12 +83,14 @@ test('posts/list published=all returns published and draft posts without discard
     assert.equal(result.total, 2)
 })
 
-test('posts/list published=false returns drafts without discarded posts', () => {
+test('posts/list published=false returns drafts without discarded posts', t => {
     const posts = [
         makePost('draft', '_drafts/draft.md', '2024-01-02T00:00:00.000Z'),
         makePost('discarded', '_discarded/123/discarded.md', '2024-01-03T00:00:00.000Z')
     ]
-    const handlers = registerHandlers(createHexo(posts, os.tmpdir()))
+    const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hexo-pro-visibility-'))
+    t.after(() => fs.rmSync(baseDir, { recursive: true, force: true }))
+    const handlers = registerHandlers(createHexo(posts, baseDir))
 
     const result = listPosts(handlers, 'published=false')
 
@@ -87,13 +98,14 @@ test('posts/list published=false returns drafts without discarded posts', () => 
     assert.equal(result.total, 1)
 })
 
-test('blog/search includeDraft=false excludes drafts while default keeps them', () => {
+test('blog/search includeDraft=false excludes drafts while default keeps them', t => {
     const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hexo-pro-search-'))
-    fs.writeFileSync(path.join(baseDir, 'blogInfoList.json'), JSON.stringify([
-        { title: 'Published match', content: 'visible keyword', isPage: false, isDraft: false, permalink: '/published/' },
-        { title: 'Draft match', content: 'draft keyword', isPage: false, isDraft: true, permalink: '/draft/' }
-    ]))
-    const handlers = registerHandlers(createHexo([], baseDir))
+    t.after(() => fs.rmSync(baseDir, { recursive: true, force: true }))
+    const posts = [
+        { ...makePost('Published match', '_posts/published.md', '2024-01-01'), content: 'visible keyword' },
+        { ...makePost('Draft match', '_drafts/draft.md', '2024-01-02'), content: 'draft keyword' }
+    ]
+    const handlers = registerHandlers(createHexo(posts, baseDir))
 
     const defaultResults = searchBlog(handlers, { searchPattern: 'keyword' })
     const publishedOnlyResults = searchBlog(handlers, { searchPattern: 'keyword', includeDraft: 'false' })

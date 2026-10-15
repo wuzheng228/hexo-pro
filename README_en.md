@@ -96,8 +96,10 @@ parent-directory/
 
 #### Prerequisites
 
-* Node.js 16+
-* Hexo 7.x
+* Node.js 20.19.0 or newer
+* Hexo 8.x
+
+Before upgrading to Hexo 8, run `node -v` and update Node.js to meet this requirement. Hexo Pro uses Hexo 8's normal dependencies; downgrading `strip-ansi` is unnecessary.
 
 #### Installation steps
 
@@ -116,8 +118,11 @@ open http://localhost:4000/pro/
 
 #### System requirements
 
-* Windows 10+ / macOS 10.14+ / Ubuntu 18.04+
-* Node.js 16+
+* Windows 10+ / macOS 12+ / Linux (see the Desktop README for supported distributions)
+* Pre-built desktop clients include Node.js; a separate Node.js installation is unnecessary to run them
+* Installing dependencies or developing the desktop client from source requires Node.js 22.12.0 or newer
+
+The desktop client runs Hexo with the Node.js runtime bundled by Electron. To use Hexo 8, update to a desktop client whose bundled Node.js meets this requirement. Updating the system's Node.js does not change the runtime used by an older desktop client.
 
 #### Installation and startup
 
@@ -267,4 +272,4 @@ Your support will make the Hexo ecosystem stronger!
 - **Database**: NeDB (embedded database)
 - **Front-end**: React (hexo-pro-client)
 - **Desktop**: Electron (hexo-pro-desktop)
-- **Core dependencies**: Hexo 7.x, Fuse.js, Multer, etc.
+- **Core dependencies**: Hexo 8.x, Fuse.js, Multer, etc.

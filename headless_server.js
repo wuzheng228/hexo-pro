@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 'use strict';
 
+require('./node-runtime').assertSupportedNode();
+
 const fs = require('fs');
 const os = require('os');
 const path = require('path');

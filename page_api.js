@@ -9,10 +9,13 @@ var extend = require('extend')
 const _ = require('lodash')
 var hfm = require('hexo-front-matter')
 
-const utils = require('./utils');
+const { ensureDocumentId, findDocument, parseRaw, moveDocumentIdentity, assignNewDocumentId } = require('./document_identity');
+const { withRevision, readDocument, sendDocumentError, resolveSource, atomicWrite, validateFilename } = require('./document_write');
 
 module.exports = function (app, hexo, use) {
     function addIsDraft(post) {
+        post = { ...post }
+        post.documentId = ensureDocumentId(hexo, post)
         post.isDraft = post?.source && post?.source.indexOf('_draft') === 0 || false
         post.isDiscarded = post?.source && post?.source.indexOf('_discarded') === 0 || false
         post.updated = formatDateTime(post.updated)
@@ -21,6 +24,8 @@ module.exports = function (app, hexo, use) {
     }
 
     function addFormatDateTime(page) {
+        page = { ...page }
+        page.documentId = ensureDocumentId(hexo, page)
         // page.isDiscarded = page.source && page.source.indexOf('_discarded') === 0
         page.updated = formatDateTime(page.updated)
         page.date = formatDateTime(page.date)
@@ -40,9 +45,9 @@ module.exports = function (app, hexo, use) {
         return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
     }
     function remove(id, body, res) {
-        id = utils.base64Decode(id)
-        var page = hexo.model('Page').filter(p => p.permalink === id).data[0]
-        if (!page) return res.send(404, "Post not found")
+        var page = findDocument(hexo, 'Page', id)
+        if (!page) return res.send(404, "Page not found")
+        const documentId = ensureDocumentId(hexo, page)
 
         // 生成唯一路径：_discarded/<timestamp>/original_path
         const timestamp = Date.now()
@@ -61,6 +66,8 @@ module.exports = function (app, hexo, use) {
             fse.move(oldPath, newPath, { overwrite: false }, err => {
                 if (err) return res.send(500, `File operation failed: ${err.message}`);
 
+                try { moveDocumentIdentity(hexo, 'Page', page.source, newSource, documentId); }
+                catch (error) { return res.send(error.statusCode || 500, error.message); }
                 // 从数据模型中删除页面记录
                 hexo.model('Page').remove({ _id: page._id }, err => {
                     if (err) return res.send(500, `Failed to remove page from model: ${err.message}`);
@@ -77,6 +84,7 @@ module.exports = function (app, hexo, use) {
                                         type: 'page',
                                         title: page.title,
                                         permalink: page.permalink,
+                                        documentId,
                                         originalSource: page.source,
                                         discardedPath: newSource.replace(/\\/g, '/'),
                                         isDraft: false,
@@ -85,7 +93,7 @@ module.exports = function (app, hexo, use) {
                                 }
                             }
                         } catch (_) { }
-                        res.done(addIsDraft(page))
+                        res.done(addIsDraft({ ...page, source: newSource }))
                     }).catch(e => {
                         console.error(e, e.stack)
                         res.send(500, 'Failed to refresh data')
@@ -107,14 +115,15 @@ module.exports = function (app, hexo, use) {
 
         try {
             // 循环生成唯一文件名，避免重试时时间戳冲突导致创建失败
+            validateFilename(requestedTitle);
             let title = requestedTitle;
-            let filePath = path.join(hexo.source_dir, `${title}/index.md`);
+            let filePath = resolveSource(hexo, `${title}/index.md`);
             let attempt = 0;
 
             while (fse.pathExistsSync(filePath)) {
                 const suffix = `${Date.now()}${attempt ? `-${attempt}` : ''}`;
                 title = `${requestedTitle}${suffix}`;
-                filePath = path.join(hexo.source_dir, `${title}/index.md`);
+                filePath = resolveSource(hexo, `${title}/index.md`);
                 attempt += 1;
                 if (attempt > 1000) {
                     throw new Error('Failed to generate unique page filename');
@@ -130,7 +139,7 @@ module.exports = function (app, hexo, use) {
             const pageContent = hfm.stringify(frontMatter);
 
             // 使用 Promise 风格，避免 callback + await 混用导致请求悬挂
-            await fs.writeFile(filePath, pageContent);
+            atomicWrite(hexo, `${title}/index.md`, pageContent, { exclusive: true });
 
             const source = filePath.slice(hexo.source_dir.length).replace(/\\/g, '/');
             await hexo.source.process([source]);
@@ -148,10 +157,11 @@ module.exports = function (app, hexo, use) {
                 page.originalTitle = requestedTitle;
             }
 
+            assignNewDocumentId(hexo, 'Page', page);
             return res.done(addFormatDateTime(page));
         } catch (e) {
-            console.error(e);
-            return res.send(500, e?.message || 'Failed to create page');
+            if (!e.statusCode || e.statusCode >= 500) console.error(e);
+            return sendDocumentError(res, e, 500);
         }
     }
 
@@ -216,25 +226,22 @@ module.exports = function (app, hexo, use) {
         var id = req.params.id
         if (id === 'pages' || !id) return next()
         if (req.method === 'GET') {
-            id = utils.base64Decode(id)
-            var page = hexo.model('Page').filter(p => p.permalink === id)
-            if (!page) return next()
-            page = page.data[0]
-            return res.done(addIsDraft(page))
+            return readDocument(hexo, 'Page', id).then(page => res.done(addIsDraft(page)), error => sendDocumentError(res, error))
         }
 
         if (!req.body) {
             return res.send(400, 'No page body given');
         }
 
-        id = req.body._id
+        id = req.body.documentId || req.body._id
 
-        update(id, req.body.update, function (err, page) {
+        update(id, { ...req.body.update, ...(req.body.baseRevision !== undefined ? { baseRevision: req.body.baseRevision } : {}) }, function (err, page) {
             if (err) {
-                return res.send(400, err);
+                return sendDocumentError(res, err);
             }
             res.done({
-                page: addIsDraft(page)
+                page: addIsDraft(page),
+                revision: page.revision
             })
         }, hexo);
     });
@@ -247,7 +254,8 @@ module.exports = function (app, hexo, use) {
             return remove(id, req.body, res)
         }
         if (action === 'rename') {
-            return rename(id, req.body, res)
+            return update(id, { source: req.body?.source, ...(req.body?.baseRevision !== undefined ? { baseRevision: req.body.baseRevision } : {}) },
+                (error, page) => error ? sendDocumentError(res, error) : res.done(addIsDraft(page)), hexo)
         }
     });
 
@@ -257,14 +265,15 @@ module.exports = function (app, hexo, use) {
             return res.send(400, 'No page body given');
         }
 
-        id = req.body._id
+        const id = req.body.documentId || req.body._id
 
-        update(id, req.body.update, function (err, page) {
+        update(id, { ...req.body.update, ...(req.body.baseRevision !== undefined ? { baseRevision: req.body.baseRevision } : {}) }, function (err, page) {
             if (err) {
-                return res.send(400, err);
+                return sendDocumentError(res, err);
             }
             res.done({
-                page: addIsDraft(page)
+                page: addIsDraft(page),
+                revision: page.revision
             })
         }, hexo);
     });
@@ -272,11 +281,9 @@ module.exports = function (app, hexo, use) {
     use('pageMeta/:id', function (req, res, next) {
         var id = req.params.id
         if (req.method === 'GET') {
-            id = utils.base64Decode(id)
-            var post = hexo.model('Page').filter(p => p.permalink === id).data[0]
-            if (!post) next()
-            var split = hfm.split(post.raw)
-            var parsed = hfm.parse([split.data, '---'].join('\n'))
+            const post = findDocument(hexo, 'Page', id)
+            if (!post) return res.send(404, 'Page not found')
+            const parsed = parseRaw(post.raw)
             const { title, author, date, _content, ...rest } = parsed
             if (typeof rest['categories'] === 'string') {
                 rest['categories'] = [rest['categories']]
@@ -321,47 +328,22 @@ module.exports = function (app, hexo, use) {
         const permalink = req.body.permalink;
         const key = req.body.key;
         const value = req.body.value;
+        if (key === 'title') { try { validateFilename(value); } catch (error) { return sendDocumentError(res, error); } }
 
         // 构建更新对象
         const frontMatterUpdate = {};
         frontMatterUpdate[key] = value;
 
         // 使用update函数更新文章
-        update(permalink, { frontMatter: frontMatterUpdate }, async function (err, post) {
+        update(permalink, { frontMatter: frontMatterUpdate, ...(req.body.baseRevision !== undefined ? { baseRevision: req.body.baseRevision } : {}) }, async function (err, post) {
             if (err) {
-                return res.send(400, err);
+                return sendDocumentError(res, err);
             }
             post = _.cloneDeep(post);
 
-            // 如果是更新标题，则尝试同步重命名页面文件夹（<title>/index.md）
-            if (key === 'title' && typeof value === 'string' && value.trim()) {
-                try {
-                    const oldAbs = path.join(hexo.source_dir, post.source);
-                    const oldDir = path.dirname(oldAbs);
-                    const parentDir = path.dirname(oldDir);
-                    const newDirName = value.trim();
-                    let targetDirAbs = path.join(parentDir, newDirName);
-                    if (fse.pathExistsSync(targetDirAbs)) {
-                        // 若已存在同名目录，添加时间戳避免冲突
-                        targetDirAbs = path.join(parentDir, `${newDirName} (${Date.now()})`);
-                    }
-                    // 重命名目录以保留目录内资源
-                    fse.moveSync(oldDir, targetDirAbs, { overwrite: false });
-                    // 让 Hexo 重新处理
-                    await hexo.source.process();
-                    // 从模型中读取最新页面数据
-                    const rel = path.relative(hexo.source_dir, path.join(targetDirAbs, path.basename(oldAbs))).replace(/\\/g, '/');
-                    const updatedPage = hexo.model('Page').findOne({ source: rel });
-                    if (updatedPage) {
-                        return res.done(addIsDraft(updatedPage));
-                    }
-                } catch (e) {
-                    // 如果目录重命名失败，不影响标题更新
-                    console.warn('[Pages API] 重命名页面目录失败:', e && e.message);
-                }
-            }
-
-            res.done(addIsDraft(post));
+            // A title edit does not move a directory outside the document write queue.
+            // Explicit source renames use the regular page/update operation.
+            res.done(withRevision(hexo, addIsDraft(post)));
         }, hexo);
     });
 

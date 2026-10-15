@@ -1,23 +1,10 @@
 const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
+const { SOURCE_SYNC_IGNORE, withSourceSyncIgnore } = require('./source_sync');
 
 const DEFAULT_BRANCH = 'main';
-const DEFAULT_SYNC_IGNORE = [
-  'node_modules/',
-  'public/',
-  '.deploy_git/',
-  '.hexopro_sync_git/',
-  '.DS_Store',
-  '.env',
-  '.env.*',
-  'deploy_config.json',
-  'sync_config.json',
-  'data/*.db',
-  'data/*.db~',
-  'data/*_cache.db',
-  '*.log'
-];
+const DEFAULT_SYNC_IGNORE = SOURCE_SYNC_IGNORE;
 
 function normalizeRepository(repository) {
   if (!repository) return '';
@@ -42,8 +29,9 @@ function buildAuthenticatedRepoUrl(repository, accessToken) {
 }
 
 function maskSyncConfig(config = {}) {
+  const { oauth, ...publicConfig } = config;
   return {
-    ...config,
+    ...publicConfig,
     githubToken: config.githubToken ? '******' : '',
     hasGithubToken: Boolean(config.githubToken)
   };
@@ -105,7 +93,8 @@ function createSyncService(baseDir, options = {}) {
       merged.githubToken = existing.githubToken;
     }
 
-    fs.writeFileSync(configPath, JSON.stringify(merged, null, 2), 'utf-8');
+    fs.writeFileSync(configPath, JSON.stringify(merged, null, 2), { encoding: 'utf-8', mode: 0o600 });
+    fs.chmodSync(configPath, 0o600);
     return merged;
   }
 
@@ -126,13 +115,15 @@ function processCommitMessage(template) {
 
 function runCommandDefault(command, args, options = {}) {
   return new Promise((resolve, reject) => {
+    const { timeout = 90000, ...spawnOptions } = options;
     const proc = spawn(command, args, {
-      ...options,
+      ...spawnOptions,
       shell: false,
       windowsVerbatimArguments: false
     });
     let stdout = '';
     let stderr = '';
+    const timer = setTimeout(() => { proc.kill('SIGTERM'); reject(new Error('连接 GitHub 超时，请检查网络后重试')); }, timeout);
 
     proc.stdout.on('data', (data) => {
       stdout += data.toString();
@@ -141,6 +132,7 @@ function runCommandDefault(command, args, options = {}) {
       stderr += data.toString();
     });
     proc.on('close', (code) => {
+      clearTimeout(timer);
       if (code === 0) {
         resolve(stdout.trim());
       } else {
@@ -151,7 +143,7 @@ function runCommandDefault(command, args, options = {}) {
         reject(error);
       }
     });
-    proc.on('error', reject);
+    proc.on('error', error => { clearTimeout(timer); reject(error); });
   });
 }
 
@@ -162,122 +154,7 @@ async function writeSyncIgnore(baseDir) {
     current = fs.readFileSync(ignorePath, 'utf-8');
   }
 
-  const lines = new Set(current.split(/\r?\n/).map((line) => line.trim()).filter(Boolean));
-  DEFAULT_SYNC_IGNORE.forEach((line) => lines.add(line));
-  fs.writeFileSync(ignorePath, `${Array.from(lines).join('\n')}\n`, 'utf-8');
-}
-
-async function ensureGitWorkspace({ baseDir, config, runCommand, writeSyncIgnore: writeIgnore, addLog }) {
-  const branch = config.branch || DEFAULT_BRANCH;
-  const publicUrl = buildPublicRepoUrl(config.repository);
-
-  try {
-    await runCommand('git', ['rev-parse', '--is-inside-work-tree'], { cwd: baseDir });
-  } catch (error) {
-    addLog('sync.git.init');
-    await runCommand('git', ['init'], { cwd: baseDir });
-  }
-
-  await writeIgnore(baseDir);
-
-  try {
-    await runCommand('git', ['remote', 'get-url', 'origin'], { cwd: baseDir });
-    await runCommand('git', ['remote', 'set-url', 'origin', publicUrl], { cwd: baseDir });
-  } catch (error) {
-    await runCommand('git', ['remote', 'add', 'origin', publicUrl], { cwd: baseDir });
-  }
-
-  try {
-    await runCommand('git', ['checkout', branch], { cwd: baseDir });
-  } catch (error) {
-    await runCommand('git', ['checkout', '-B', branch], { cwd: baseDir });
-  }
-
-  await runCommand('git', ['config', 'user.name', config.gitUserName || 'Hexo Pro'], { cwd: baseDir });
-  await runCommand('git', ['config', 'user.email', config.gitUserEmail || 'hexo-pro@users.noreply.github.com'], { cwd: baseDir });
-}
-
-async function commitLocalChanges({ baseDir, config, runCommand, addLog }) {
-  const status = parseGitStatus(await runCommand('git', ['status', '--porcelain'], { cwd: baseDir }));
-  if (!status.dirty) {
-    addLog('sync.git.no.local.changes');
-    return status;
-  }
-
-  await runCommand('git', ['add', '.'], { cwd: baseDir });
-  await runCommand('git', ['commit', '-m', processCommitMessage(config.commitMessage)], { cwd: baseDir });
-  addLog('sync.git.committed.local.changes');
-  return status;
-}
-
-async function fetchRemote({ baseDir, config, runCommand }) {
-  const branch = config.branch || DEFAULT_BRANCH;
-  const authUrl = buildAuthenticatedRepoUrl(config.repository, config.githubToken);
-  await runCommand('git', ['fetch', authUrl, `${branch}:refs/remotes/origin/${branch}`], { cwd: baseDir });
-}
-
-async function getRemoteAheadCount({ baseDir, config, runCommand }) {
-  try {
-    const branch = config.branch || DEFAULT_BRANCH;
-    const output = await runCommand('git', ['rev-list', '--count', `HEAD..origin/${branch}`], { cwd: baseDir });
-    return Number.parseInt(output, 10) || 0;
-  } catch (error) {
-    return 0;
-  }
-}
-
-async function runPushWorkflow(options) {
-  const {
-    baseDir,
-    config,
-    runCommand = runCommandDefault,
-    writeSyncIgnore: writeIgnore = writeSyncIgnore,
-    addLog = () => {}
-  } = options;
-  const branch = config.branch || DEFAULT_BRANCH;
-  const authUrl = buildAuthenticatedRepoUrl(config.repository, config.githubToken);
-
-  if (!config.repository) throw new Error('缺少 GitHub 仓库');
-  if (!authUrl) throw new Error('请先填写 GitHub Personal Access Token');
-
-  await ensureGitWorkspace({ baseDir, config, runCommand, writeSyncIgnore: writeIgnore, addLog });
-  await commitLocalChanges({ baseDir, config, runCommand, addLog });
-  await fetchRemote({ baseDir, config, runCommand });
-
-  const ahead = await getRemoteAheadCount({ baseDir, config, runCommand });
-  if (ahead > 0) {
-    throw new Error('远端分支有更新，请先从 GitHub 同步到本地');
-  }
-
-  addLog('sync.git.pushing');
-  await runCommand('git', ['push', authUrl, `HEAD:${branch}`], { cwd: baseDir });
-  addLog('sync.git.push.success');
-}
-
-async function runPullWorkflow(options) {
-  const {
-    baseDir,
-    config,
-    runCommand = runCommandDefault,
-    writeSyncIgnore: writeIgnore = writeSyncIgnore,
-    addLog = () => {}
-  } = options;
-  const branch = config.branch || DEFAULT_BRANCH;
-  const authUrl = buildAuthenticatedRepoUrl(config.repository, config.githubToken);
-
-  if (!config.repository) throw new Error('缺少 GitHub 仓库');
-  if (!authUrl) throw new Error('请先填写 GitHub Personal Access Token');
-
-  await ensureGitWorkspace({ baseDir, config, runCommand, writeSyncIgnore: writeIgnore, addLog });
-  await commitLocalChanges({ baseDir, config, runCommand, addLog });
-  addLog('sync.git.pulling');
-  await runCommand('git', ['pull', '--rebase', authUrl, branch], { cwd: baseDir });
-  addLog('sync.git.pull.success');
-}
-
-async function runBidirectionalWorkflow(options) {
-  await runPullWorkflow(options);
-  await runPushWorkflow(options);
+  fs.writeFileSync(ignorePath, withSourceSyncIgnore(current), 'utf-8');
 }
 
 module.exports = {
@@ -291,8 +168,5 @@ module.exports = {
   createSyncService,
   processCommitMessage,
   runCommandDefault,
-  writeSyncIgnore,
-  runPushWorkflow,
-  runPullWorkflow,
-  runBidirectionalWorkflow
+  writeSyncIgnore
 };

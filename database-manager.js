@@ -2,6 +2,7 @@ const Datastore = require('@seald-io/nedb');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const { hashSecret } = require('./auth_security');
 
 class DatabaseManager {
   constructor() {
@@ -217,7 +218,8 @@ class DatabaseManager {
       if (userCount === 0 && hexo.config.hexo_pro && hexo.config.hexo_pro.username && hexo.config.hexo_pro.password) {
         const defaultUser = {
           username: hexo.config.hexo_pro.username,
-          password: hexo.config.hexo_pro.password,
+          password: await hashSecret(String(hexo.config.hexo_pro.password)),
+          tokenVersion: 0,
           avatar: hexo.config.avatar ? hexo.config.avatar : '',
           createdAt: new Date(),
           updatedAt: new Date()
@@ -303,4 +305,4 @@ class DatabaseManager {
 // 创建全局单例实例
 const databaseManager = new DatabaseManager();
 
-module.exports = databaseManager; 
+module.exports = databaseManager;

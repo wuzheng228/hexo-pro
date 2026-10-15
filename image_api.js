@@ -2,6 +2,7 @@ const path = require('path');
 const fs = require('fs-extra');
 const multer = require('multer');
 const axios = require('axios');
+const mime = require('mime');
 const { v4: uuidv4 } = require('uuid');
 const utils = require('./utils');
 
@@ -203,6 +204,71 @@ module.exports = function (app, hexo, use, db) {
 
     // 初始化时尝试加载一次
     loadStorageConfigFromDb();
+
+    // 编辑器直接读取源图片，避免新上传的文件等待 Hexo 生成或部署。
+    // 通过 use 注册，沿用管理 API 的认证保护。
+    use('images/file', function (req, res) {
+        if (req.method !== 'GET') {
+            return res.send(405, '请使用 GET 请求读取图片');
+        }
+
+        if (typeof req.query?.path !== 'string' || !req.query.path.trim()) {
+            return res.send(400, '图片路径不能为空');
+        }
+
+        let imagePath;
+        try {
+            imagePath = decodeURIComponent(req.query.path);
+        } catch (_) {
+            return res.send(400, '非法的图片路径');
+        }
+        if (imagePath.includes('\0') || imagePath.includes('\\')
+            || /^[a-z][a-z\d+.-]*:/i.test(imagePath)
+            || imagePath.split('/').includes('..')) {
+            return res.send(400, '非法的图片路径');
+        }
+
+        const relativePath = imagePath.replace(/^\/+/, '');
+        const extension = path.extname(relativePath).slice(1).toLowerCase();
+        if (!ALLOWED_IMAGE_EXTS.has(extension)) {
+            return res.send(400, '仅支持读取图片文件');
+        }
+
+        const sourceDir = path.resolve(hexo.source_dir);
+        const filePath = path.resolve(sourceDir, relativePath);
+        const isInside = (root, file) => {
+            const relative = path.relative(root, file);
+            return relative && relative !== '..' && !relative.startsWith('..' + path.sep) && !path.isAbsolute(relative);
+        };
+        if (!isInside(sourceDir, filePath)) {
+            return res.send(400, '非法的图片路径');
+        }
+
+        try {
+            const realSourceDir = fs.realpathSync(sourceDir);
+            const realFilePath = fs.realpathSync(filePath);
+            if (!isInside(realSourceDir, realFilePath)) {
+                return res.send(400, '非法的图片路径');
+            }
+            if (!ALLOWED_IMAGE_EXTS.has(path.extname(realFilePath).slice(1).toLowerCase())) {
+                return res.send(400, '仅支持读取图片文件');
+            }
+            if (!fs.statSync(realFilePath).isFile()) {
+                return res.send(404, '图片不存在');
+            }
+            const buffer = fs.readFileSync(realFilePath);
+            res.setHeader('Content-Type', mime.getType(realFilePath) || 'application/octet-stream');
+            res.setHeader('Content-Length', buffer.length);
+            res.setHeader('Cache-Control', 'private, no-cache');
+            res.setHeader('X-Content-Type-Options', 'nosniff');
+            return res.end(buffer);
+        } catch (error) {
+            if (error.code === 'ENOENT' || error.code === 'ENOTDIR') {
+                return res.send(404, '图片不存在');
+            }
+            return res.send(500, '读取图片失败');
+        }
+    });
 
     // 设置图床配置API（持久化到 settings.db）
     use('images/config/set', function (req, res) {

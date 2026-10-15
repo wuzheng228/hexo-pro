@@ -1,6 +1,7 @@
 const path = require('path');
 const fs = require('fs-extra');
 const hfm = require('hexo-front-matter');
+const { moveDocumentIdentity, lookupDocumentId, parseRaw } = require('./document_identity');
 
 module.exports = function (app, hexo, use, db) {
     const recycleDb = db && db.recycleDb;
@@ -163,19 +164,23 @@ module.exports = function (app, hexo, use, db) {
                 if (shouldRenameTitle) {
                     try {
                         const raw = fs.readFileSync(finalAbs, 'utf8');
-                        const split = hfm.split(raw || '');
-                        const parsed = hfm.parse([split.data, '---'].join('\n'));
+                        const parsed = parseRaw(raw);
                         const oldTitle = parsed && typeof parsed.title === 'string' ? parsed.title : (doc.title || '');
                         const newTitle = oldTitle ? `${oldTitle}${restoredSuffix}` : `${path.basename(finalAbs, path.extname(finalAbs))}`;
                         parsed.title = newTitle;
-                        const fmStr = hfm.stringify(parsed);
-                        const newRaw = [fmStr, split.content || ''].join('\n');
+                        const newRaw = hfm.stringify(parsed, { prefixSeparator: true });
                         fs.writeFileSync(finalAbs, newRaw, 'utf8');
                     } catch (e) {
                         // 标题更新失败不阻断流程
                         console.warn('[Recycle API] 更新标题失败:', e && e.message);
                     }
                 }
+
+                try {
+                    const kind = doc.type === 'post' ? 'Post' : 'Page';
+                    const documentId = doc.documentId || lookupDocumentId(hexo, { source: doc.discardedPath }, kind);
+                    if (documentId) moveDocumentIdentity(hexo, kind, doc.discardedPath, path.relative(hexo.source_dir, finalAbs), documentId);
+                } catch (error) { return res.send(error.statusCode || 500, error.message); }
 
                 // 清理空目录：自文件所在目录向上清理，直到 _discarded 根目录
                 try {
