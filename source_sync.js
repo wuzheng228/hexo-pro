@@ -79,7 +79,7 @@ function cleanHexoConfig(text) {
   return changed ? yaml.dump(config) : text;
 }
 
-async function copySourceProject(baseDir, deployDir, { publicDir = path.join(baseDir, 'public') } = {}) {
+async function copySourceProject(baseDir, deployDir, { publicDir = path.join(baseDir, 'public'), respectGitIgnore = true } = {}) {
   baseDir = path.resolve(baseDir);
   deployDir = path.resolve(deployDir);
   const publicRelative = path.relative(baseDir, path.resolve(publicDir)).split(path.sep).join('/');
@@ -97,7 +97,7 @@ async function copySourceProject(baseDir, deployDir, { publicDir = path.join(bas
     }
   }
   await walk(baseDir);
-  const ignored = await ignoredFiles(baseDir, path.join(deployDir, '.git'), entries.map(entry => entry.relative));
+  const ignored = respectGitIgnore ? await ignoredFiles(baseDir, path.join(deployDir, '.git'), entries.map(entry => entry.relative)) : new Set();
   const selected = entries.filter(entry => !ignored.has(entry.relative)
     || entry.relative === IDENTITY_PATH || entry.relative === '.gitignore');
 

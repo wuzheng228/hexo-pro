@@ -56,13 +56,15 @@ module.exports = function (app, hexo, use) {
   });
   post('sync/check', (req, res) => run(res, 'checking', () => cloud.check(service.readConfig())));
   post('sync/preview', (req, res) => run(res, 'checking', () => {
-    if (typeof hexo.model === 'function') prepareDocumentIds(hexo);
-    return cloud.preview(service.readConfig());
+    if (req.body?.mode !== 'restore' && typeof hexo.model === 'function') prepareDocumentIds(hexo);
+    return cloud.preview(service.readConfig(), req.body?.mode);
   }));
   post('sync/diff', async (req, res) => res.done(cloud.diff(req.body?.id, req.body?.path)));
   post('sync/apply', (req, res) => run(res, 'syncing', async () => {
     const result = await cloud.apply(service.readConfig(), req.body?.id, req.body?.resolutions);
-    if (result.downloaded && typeof hexo.source?.process === 'function') {
+    if (result.mode === 'restore') {
+      result.refreshWarning = '请重新打开博客，使恢复的配置、主题和依赖生效。';
+    } else if (result.downloaded && typeof hexo.source?.process === 'function') {
       try { await hexo.source.process(); }
       catch { result.refreshWarning = '文件已同步，文章列表刷新失败，请重新打开博客'; }
     }

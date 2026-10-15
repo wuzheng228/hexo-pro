@@ -50,13 +50,14 @@ function mergeIdentities(base, local, remote) {
   } catch { return null; }
 }
 
-function makePlan(base, local, remote, identityRaw) {
+function makePlan(base, local, remote, identityRaw, mode = 'sync') {
   const changes = [];
   for (const name of new Set([...Object.keys(base || {}), ...local.keys(), ...remote.keys()])) {
     const l = local.get(name), r = remote.get(name), b = base?.[name];
     if (same(l, r)) continue;
     let direction;
-    if (!base) direction = !r ? 'upload' : !l ? 'download' : 'conflict';
+    if (mode === 'restore') direction = 'download';
+    else if (!base) direction = !r ? 'upload' : !l ? 'download' : 'conflict';
     else direction = same(l, b) ? 'download' : same(r, b) ? 'upload' : 'conflict';
     let merged;
     if (direction === 'conflict' && name === IDENTITY_PATH && l && r) {
@@ -122,11 +123,22 @@ function createCloudSync(baseDir, options = {}) {
     return head;
   }
 
-  async function snapshot(directory, destination, ctx) {
+  async function snapshot(directory, destination, ctx, restoreRemote = false) {
     await fs.mkdir(destination, { recursive: true });
     await ctx.git(destination, ['init']);
-    const relativePublic = path.relative(baseDir, publicDir);
-    const names = await copySourceProject(directory, destination, { publicDir: path.join(directory, relativePublic) });
+    let relativePublic = path.relative(baseDir, publicDir);
+    if (restoreRemote) {
+      const configFile = path.join(directory, '_config.yml');
+      if ((await fs.lstat(configFile).catch(() => null))?.isFile()) {
+        const settings = yaml.load(await fs.readFile(configFile, 'utf8'));
+        relativePublic = settings?.public_dir || 'public';
+      }
+    }
+    // The freshly fetched checkout contains tracked files only. Its ignore rules
+    // must not hide tracked themes/configuration during an authoritative restore.
+    const names = await copySourceProject(directory, destination, {
+      publicDir: path.resolve(directory, relativePublic), respectGitIgnore: !restoreRemote
+    });
     const files = new Map();
     for (const name of names) {
       const file = path.join(destination, name), stat = await fs.lstat(file);
@@ -164,7 +176,8 @@ function createCloudSync(baseDir, options = {}) {
     return head;
   }
 
-  async function preview(config) {
+  async function preview(config, mode = 'sync') {
+    if (!['sync', 'restore'].includes(mode)) throw fail('请选择双向同步或从 GitHub 恢复');
     config = validate(config);
     const ctx = context(config);
     await fs.mkdir(ctx.root, { recursive: true, mode: 0o700 });
@@ -175,13 +188,23 @@ function createCloudSync(baseDir, options = {}) {
     const directory = await fs.mkdtemp(path.join(ctx.root, 'preview-'));
     try {
       const local = await snapshot(baseDir, path.join(directory, 'local'), ctx);
-      const remote = head ? await snapshot(ctx.remoteDir, path.join(directory, 'remote'), ctx) : new Map();
-      const excluded = await ignoredFiles(baseDir, path.join(directory, 'local', '.git'), [...remote.keys()]);
-      for (const name of excluded) if (name !== IDENTITY_PATH && name !== '.gitignore') remote.delete(name);
+      const remote = head ? await snapshot(ctx.remoteDir, path.join(directory, 'remote'), ctx, mode === 'restore') : new Map();
+      if (mode === 'restore') {
+        if (!head) throw fail('GitHub 仓库还是空的，没有可以恢复的博客');
+        let manifest;
+        try { manifest = JSON.parse(remote.get('package.json')?.bytes.toString()); } catch { /* Report a source-repository error below. */ }
+        if (!remote.has('_config.yml') || !(manifest?.dependencies?.hexo || manifest?.devDependencies?.hexo)) {
+          throw fail('请选择包含 _config.yml 和 Hexo package.json 的源码仓库或分支，不能从网站发布目录恢复');
+        }
+      } else {
+        const excluded = await ignoredFiles(baseDir, path.join(directory, 'local', '.git'), [...remote.keys()]);
+        for (const name of excluded) if (name !== IDENTITY_PATH && name !== '.gitignore') remote.delete(name);
+      }
       const state = await readState(ctx.stateFile);
-      const changes = makePlan(state?.files, local, remote, state?.identityRaw);
+      const changes = makePlan(state?.files, local, remote, state?.identityRaw, mode);
       const indexChange = changes.find(change => change.path === IDENTITY_PATH);
-      if (indexChange?.direction !== 'conflict') {
+      // A restore must never upload template files or rewrite the remote identity index.
+      if (mode === 'sync' && indexChange?.direction !== 'conflict') {
         const currentIndex = indexChange?.merged || (indexChange?.direction === 'download' ? remote.get(IDENTITY_PATH) : local.get(IDENTITY_PATH)) || remote.get(IDENTITY_PATH);
         const identities = parseIdentities(currentIndex?.bytes);
         const known = new Set(identities.documents.map(record => record.source));
@@ -202,8 +225,8 @@ function createCloudSync(baseDir, options = {}) {
           if (indexChange) Object.assign(indexChange, change); else changes.push(change);
         }
       }
-      pending = { id: randomUUID(), config, ctx, directory, head, local, remote, changes, state };
-      return { id: pending.id, firstSync: !state, repository: config.repository, branch: config.branch,
+      pending = { id: randomUUID(), config, ctx, directory, head, local, remote, changes, state, mode };
+      return { id: pending.id, mode, firstSync: !state, repository: config.repository, branch: config.branch,
         localCount: local.size, remoteCount: remote.size,
         changes: changes.map(({ merged, ...change }) => change),
         uploadCount: changes.filter(c => c.direction === 'upload' || c.direction === 'merge').length,
@@ -330,7 +353,7 @@ function createCloudSync(baseDir, options = {}) {
       await fs.rename(temporary, ctx.stateFile);
       await fs.rm(journal, { force: true });
       pending = null;
-      return { success: true, uploaded: uploads.size, downloaded: downloads.size, lastSyncTime: state.lastSyncTime, backupDir: downloads.size ? backupDir : null };
+      return { success: true, mode: plan.mode, uploaded: uploads.size, downloaded: downloads.size, lastSyncTime: state.lastSyncTime, backupDir: downloads.size ? backupDir : null };
     } finally { if (lock) { await lock.close(); await fs.rm(lockPath, { force: true }); } }
   }
 
@@ -362,7 +385,7 @@ function createCloudSync(baseDir, options = {}) {
     return { path: name, local: content(pending.local.get(name)), remote: content(pending.remote.get(name)) };
   }
 
-  return { check: config => withLock(config, () => check(config)), preview: config => withLock(config, () => preview(config)),
+  return { check: config => withLock(config, () => check(config)), preview: (config, mode) => withLock(config, () => preview(config, mode)),
     apply: (config, id, choices) => withLock(config, () => apply(config, id, choices)), diff };
 }
 
