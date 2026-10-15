@@ -1,6 +1,6 @@
 {
   "name": "hexo-pro",
-  "version": "2.1.0-beta.0",
+  "version": "2.1.0-beta.1",
   "description": "hexo pro a backend plugin for hexo",
   "main": "index.js",
   "engines": {
