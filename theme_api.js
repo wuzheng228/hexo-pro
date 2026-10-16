@@ -1,9 +1,11 @@
 const path = require('path');
 const fs = require('hexo-fs');
 const fse = require('fs-extra');
-const { exec } = require('child_process');
+const { runTool } = require('./process-tools');
 const yaml = require('js-yaml');
 const { getLiveHexo, switchTheme } = require('./theme_runtime');
+const { listThemes, findTheme } = require('./theme_catalog');
+const { deepMerge } = require('hexo-util');
 
 /**
  * 清理 public 目录，确保静态文件重新生成
@@ -43,7 +45,8 @@ function extractSchemaFromFileContent(fullObj) {
  * 读取 schema 文件，若 _meta.configHash 匹配则返回 schema
  */
 function readSchemaFileWithMeta(baseDir, themeId) {
-  const schemaPath = getSchemaFilePath(baseDir, themeId)
+  const overridePath = getSchemaFilePath(baseDir, themeId)
+  const schemaPath = fs.existsSync(overridePath) ? overridePath : path.join(baseDir, 'themes', themeId, '_config.schema.json')
   if (!fs.existsSync(schemaPath)) return null
   try {
     const content = fse.readFileSync(schemaPath, 'utf-8')
@@ -140,18 +143,6 @@ const BUILTIN_THEMES = [
     themeDir: 'volantis',
   },
 ];
-
-function execPromise(command, options = {}) {
-  return new Promise((resolve, reject) => {
-    exec(command, { cwd: options.cwd || process.cwd(), timeout: 120000, ...options }, (error, stdout, stderr) => {
-      if (error) {
-        reject(new Error(stderr || stdout || error.message));
-      } else {
-        resolve(stdout);
-      }
-    });
-  });
-}
 
 const SNAPSHOT_STORE_DIR = '.hexo-pro/theme-config-snapshots'
 const MAX_THEME_CONFIG_SNAPSHOTS = 30
@@ -268,8 +259,8 @@ function isThemeInstalled(baseDir, theme) {
   return fs.existsSync(themePath)
 }
 
-function getThemeById(themeId) {
-  return BUILTIN_THEMES.find((t) => t.id === themeId)
+function getThemeById(baseDir, themeId) {
+  return findTheme(baseDir, BUILTIN_THEMES, themeId)
 }
 
 function formatYamlParseError(error) {
@@ -314,13 +305,13 @@ async function applyThemeConfigContent(hexo, baseDir, theme, content) {
 
   try {
     const newThemeConfig = yaml.load(content) || {}
-    if (newThemeConfig && typeof newThemeConfig === 'object') {
-      hexo.config.theme_config = Object.assign({}, hexo.config.theme_config, newThemeConfig)
-      if (hexo.theme && hexo.theme.config) {
-        hexo.theme.config = Object.assign({}, hexo.theme.config, newThemeConfig)
-      }
-      hexo.log.info('主题配置已在内存中热更新')
-    }
+    const defaults = yaml.load(fse.readFileSync(path.join(baseDir, 'themes', theme.themeDir, '_config.yml'), 'utf8')) || {}
+    const siteConfig = yaml.load(readGlobalConfigContent(baseDir)) || {}
+    // Rebuild from files: removed keys fall back to defaults, and site-level
+    // theme_config keeps the same priority as a fresh Hexo startup.
+    hexo.config.theme_config = deepMerge(newThemeConfig, siteConfig.theme_config || {})
+    hexo.theme.config = deepMerge(defaults, hexo.config.theme_config)
+    hexo.log.info('主题配置已在内存中热更新')
   } catch (err) {
     hexo.log.warn('解析主题配置失败，已保存文件:', err.message)
   }
@@ -358,7 +349,7 @@ module.exports = function (app, hexo, use, db) {
   // 获取内置主题列表
   use('theme/list', function (req, res) {
     try {
-      res.done(BUILTIN_THEMES);
+      res.done(listThemes(hexo.base_dir, BUILTIN_THEMES));
     } catch (error) {
       hexo.log.error('获取主题列表失败:', error);
       res.send(500, '获取主题列表失败');
@@ -379,7 +370,7 @@ module.exports = function (app, hexo, use, db) {
         name: themeName,
         installed,
         builtin: !!builtin,
-        themeInfo: builtin || null,
+        themeInfo: getThemeById(hexo.base_dir, themeName) || null,
       });
     } catch (error) {
       hexo.log.error('获取当前主题失败:', error);
@@ -419,12 +410,12 @@ module.exports = function (app, hexo, use, db) {
 
         // 1. git clone
         hexo.log.info(`[Theme] 正在克隆主题 ${theme.name}...`);
-        await execPromise(`git clone -b ${theme.branch} ${theme.repo} "${themePath}"`, { cwd: baseDir });
+        await runTool('git', ['clone', '-b', theme.branch, '--', theme.repo, themePath], { cwd: baseDir });
 
         // 2. 安装依赖
         if (theme.dependencies && theme.dependencies.length > 0) {
           hexo.log.info(`[Theme] 正在安装主题依赖...`);
-          await execPromise(`npm install ${theme.dependencies.join(' ')} --save`, { cwd: baseDir });
+          await runTool('npm', ['install', '--save', '--no-audit', '--no-fund', ...theme.dependencies], { cwd: baseDir });
         }
 
         // 3. 复制主题配置到根目录作为覆盖配置
@@ -455,7 +446,7 @@ module.exports = function (app, hexo, use, db) {
       return res.send(400, '缺少主题ID');
     }
 
-    const theme = getThemeById(themeId);
+    const theme = getThemeById(hexo.base_dir, themeId);
     if (!theme) {
       return res.send(404, '主题不存在');
     }
@@ -483,7 +474,7 @@ module.exports = function (app, hexo, use, db) {
       return res.send(400, '缺少主题ID或配置内容');
     }
 
-    const theme = getThemeById(themeId);
+    const theme = getThemeById(hexo.base_dir, themeId);
     if (!theme) {
       return res.send(404, '主题不存在');
     }
@@ -534,7 +525,7 @@ module.exports = function (app, hexo, use, db) {
       return res.send(400, '缺少主题ID');
     }
 
-    const theme = getThemeById(themeId);
+    const theme = getThemeById(hexo.base_dir, themeId);
     if (!theme) {
       return res.send(404, '主题不存在');
     }
@@ -559,7 +550,7 @@ module.exports = function (app, hexo, use, db) {
       return res.send(400, '缺少主题ID')
     }
 
-    const theme = getThemeById(themeId)
+    const theme = getThemeById(hexo.base_dir, themeId)
     if (!theme) {
       return res.send(404, '主题不存在')
     }
@@ -602,7 +593,7 @@ module.exports = function (app, hexo, use, db) {
       return res.send(400, '缺少主题ID或快照ID')
     }
 
-    const theme = getThemeById(themeId)
+    const theme = getThemeById(hexo.base_dir, themeId)
     if (!theme) {
       return res.send(404, '主题不存在')
     }
@@ -786,7 +777,7 @@ module.exports = function (app, hexo, use, db) {
       return res.send(400, '缺少主题ID');
     }
 
-    const theme = BUILTIN_THEMES.find((t) => t.id === themeId);
+    const theme = getThemeById(hexo.base_dir, themeId);
     if (!theme) {
       return res.done({ installed: false });
     }
@@ -810,7 +801,7 @@ module.exports = function (app, hexo, use, db) {
       return res.send(400, '缺少主题ID');
     }
 
-    const theme = BUILTIN_THEMES.find((t) => t.id === themeId);
+    const theme = getThemeById(hexo.base_dir, themeId);
     if (!theme) {
       return res.send(404, '主题不存在');
     }
@@ -838,7 +829,7 @@ module.exports = function (app, hexo, use, db) {
       return res.send(400, '缺少主题ID')
     }
 
-    const theme = BUILTIN_THEMES.find((t) => t.id === themeId)
+    const theme = getThemeById(hexo.base_dir, themeId)
     if (!theme) {
       return res.send(404, '主题不存在')
     }
@@ -868,7 +859,7 @@ module.exports = function (app, hexo, use, db) {
       return res.send(400, '缺少主题ID或 Schema')
     }
 
-    const theme = BUILTIN_THEMES.find((t) => t.id === themeId)
+    const theme = getThemeById(hexo.base_dir, themeId)
     if (!theme) {
       return res.send(404, '主题不存在')
     }
@@ -901,7 +892,7 @@ module.exports = function (app, hexo, use, db) {
       return res.send(400, '缺少主题ID');
     }
 
-    const theme = BUILTIN_THEMES.find((t) => t.id === themeId);
+    const theme = getThemeById(hexo.base_dir, themeId);
     if (!theme) {
       return res.send(404, '主题不存在');
     }

@@ -1,6 +1,7 @@
 const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
+const { resolveTool } = require('./process-tools');
 const { SOURCE_SYNC_IGNORE, withSourceSyncIgnore } = require('./source_sync');
 
 const DEFAULT_BRANCH = 'main';
@@ -116,8 +117,10 @@ function processCommitMessage(template) {
 function runCommandDefault(command, args, options = {}) {
   return new Promise((resolve, reject) => {
     const { timeout = 90000, ...spawnOptions } = options;
-    const proc = spawn(command, args, {
+    const resolved = resolveTool(command, args, options.env || process.env);
+    const proc = spawn(resolved.command, resolved.args, {
       ...spawnOptions,
+      windowsHide: true,
       shell: false,
       windowsVerbatimArguments: false
     });

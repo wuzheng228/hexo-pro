@@ -1,6 +1,5 @@
 'use strict';
 
-const { spawn } = require('child_process');
 const _ = require('lodash');
 const updateAny = require('./update');
 const { createHermesConfig } = require('./mcp_config');
@@ -108,19 +107,6 @@ module.exports = function (app, hexo, use, db) {
       await setDeployStatus({ logs: logs.slice(-200) });
     };
 
-    const runCommand = (command, args) => new Promise((resolve, reject) => {
-      const proc = spawn(command, args, {
-        cwd: hexo.base_dir,
-        shell: true
-      });
-      proc.stdout.on('data', (data) => addLog(data.toString().trim()).catch(() => {}));
-      proc.stderr.on('data', (data) => addLog(data.toString().trim()).catch(() => {}));
-      proc.on('close', (code) => {
-        if (code === 0) resolve();
-        else reject(new Error(`${command} ${args.join(' ')} exited with ${code}`));
-      });
-      proc.on('error', reject);
-    });
 
     try {
       await setDeployStatus({
@@ -135,12 +121,12 @@ module.exports = function (app, hexo, use, db) {
       if (!options.skipGenerate) {
         await setDeployStatus({ progress: 30, stage: 'generate' });
         await addLog('hexo generate');
-        await runCommand('hexo', ['generate']);
+        await hexo.call('generate');
       }
 
       await setDeployStatus({ progress: 70, stage: 'deploy' });
       await addLog('hexo deploy');
-      await runCommand('hexo', ['deploy']);
+      await hexo.call('deploy');
 
       await setDeployStatus({
         isDeploying: false,

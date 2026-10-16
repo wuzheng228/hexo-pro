@@ -3,6 +3,7 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
+const { resolveTool } = require('./process-tools');
 const yaml = require('js-yaml');
 
 const IDENTITY_PATH = '.hexo-pro/document-identities.json';
@@ -40,7 +41,7 @@ function isLocalOnly(relative, publicRelative) {
 function ignoredFiles(baseDir, gitDir, files) {
   if (!files.length) return Promise.resolve(new Set());
   return new Promise((resolve, reject) => {
-    const child = spawn('git', ['--git-dir', gitDir, '--work-tree', baseDir,
+    const child = spawn(resolveTool('git').command, ['--git-dir', gitDir, '--work-tree', baseDir,
       'check-ignore', '--no-index', '-z', '--stdin'], { cwd: baseDir, shell: false });
     const output = [];
     child.stdout.on('data', chunk => output.push(chunk));

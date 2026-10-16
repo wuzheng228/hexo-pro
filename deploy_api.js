@@ -1,7 +1,8 @@
 const path = require('path');
 const fs = require('hexo-fs');
 const fse = require('fs-extra');
-const { exec, spawn } = require('child_process');
+const { spawn } = require('child_process');
+const { resolveTool } = require('./process-tools');
 const utils = require('./utils');
 const yaml = require('js-yaml');
 const { copySourceProject } = require('./source_sync');
@@ -440,11 +441,13 @@ module.exports = function (app, hexo, use, db) {
 
         const runCommand = (command, args, options) => {
             return new Promise((resolve, reject) => {
-                let finalCommand = command;
-                let finalArgs = args;
+                const resolved = resolveTool(command, args);
+                const finalCommand = resolved.command;
+                const finalArgs = resolved.args;
                 let mergedOptions = { 
                     ...options,
-                    shell: command !== 'git',
+                    shell: false,
+                    windowsHide: true,
                     env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
                     windowsVerbatimArguments: false
                 };
@@ -567,7 +570,29 @@ module.exports = function (app, hexo, use, db) {
                 }
             }
 
+            // A newly cloned empty repository may still have Git's default
+            // unborn branch. Always select the branch chosen in the UI.
+            try {
+                await runCommand('git', ['checkout', config.branch || 'main'], { cwd: deployDir });
+            } catch (_) {
+                await runCommand('git', ['checkout', '-b', config.branch || 'main'], { cwd: deployDir });
+            }
+
             addLog('deploy.git.copying.files');
+
+            // A first-time desktop user has no global Git identity. Configure
+            // only this app-owned deployment repository, preserving any identity
+            // already supplied by the user, their environment or Git config.
+            for (const [key, fallback] of [
+                ['user.name', config.gitUserName || hexo.config.author || 'Hexo Pro'],
+                ['user.email', config.gitUserEmail || 'hexo-pro@localhost']
+            ]) {
+                try {
+                    await runCommand('git', ['config', '--get', key], { cwd: deployDir });
+                } catch (_) {
+                    await runCommand('git', ['config', '--local', key, fallback], { cwd: deployDir });
+                }
+            }
             
             // 清空 deploy 目录（除了 .git）
             const files = await fse.readdir(deployDir);

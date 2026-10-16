@@ -1,6 +1,6 @@
 {
   "name": "hexo-pro",
-  "version": "2.1.0-beta.1",
+  "version": "2.1.0-beta.2",
   "description": "hexo pro a backend plugin for hexo",
   "main": "index.js",
   "engines": {
@@ -89,6 +89,7 @@
     "page_api.js",
     "post_api.js",
     "preview_api.js",
+    "process-tools.js",
     "recycle_api.js",
     "schema_generator.js",
     "settings_api.js",
@@ -96,6 +97,7 @@
     "sync_api.js",
     "sync_service.js",
     "theme_api.js",
+    "theme_catalog.js",
     "theme_runtime.js",
     "update.js",
     "utils.js",
